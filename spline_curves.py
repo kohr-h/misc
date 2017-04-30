@@ -198,7 +198,7 @@ class CubicSpline(object):
 # %% Input values for later
 
 # Input values
-points = np.array([[0, -1], [-1, 0], [1, 1], [-2, 1], [-4, 0]])
+points = np.array([[0, 0], [1, 1], [-1, 2], [0, 2], [5, 5]])
 n_splines = len(points) - 1
 n_eval_pts = n_splines * 50
 x = np.linspace(0, n_splines, num=n_eval_pts)
