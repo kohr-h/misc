@@ -2,7 +2,8 @@
 #include <stdexcept>
 #include <eigen3/Eigen/Dense>
 
-# include "path.hpp"
+#include "path.hpp"
+#include "searchsorted.hpp"
 
 
 template <size_t ndim>

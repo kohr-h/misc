@@ -4,55 +4,14 @@
 
 
 template <typename T>
-void print(std::vector<T> const &v) {
-    std::cout << "[";
-    for (size_t i = 0; i < v.size() - 1; ++i) {
-        std::cout << v[i] << ", ";
-    }
-    std::cout << v[v.size() - 1] << "]" << std::endl;
-}
-
-
-template <typename T>
-std::vector<size_t> merge_indices(std::vector<T> const &v1, std::vector<T> const &v2) {
-    std::vector<size_t> idcs;
-
-    typename std::vector<T>::const_iterator it1 = v1.begin();
-    typename std::vector<T>::const_iterator it2 = v2.begin();
-
-    for (size_t index = 0;;) {
-        if (it2 == v2.end()) break;
-
-        if (it1 == v1.end()) {
-            idcs.push_back(index);
-            ++it2;
-        } else {
-            if (*it1 < *it2) {
-                ++it1;
-                if (index <= v1.size()) {
-                    ++index;
-                }
-            } else {
-                idcs.push_back(index);
-                ++it2;
-            }
-        }
-    }
-    return idcs;
-}
-
-
-template <typename T>
 std::vector<size_t> sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
                                          Eigen::Matrix<T, Eigen::Dynamic, 1> const &v2) {
     std::vector<size_t> idcs;
-
     int i1 = 0, i2 = 0, ins_idx = 0;
-
     while (true) {
         if (i2 == v2.size()) break;
 
-        if (i1 == v1.size() - 1) {
+        if (i1 == v1.size()) {
             idcs.push_back(ins_idx);
             if (ins_idx < v1.size()) ++ins_idx;
             ++i2;
@@ -113,9 +72,6 @@ std::vector<size_t> searchsorted(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
     std::sort(v2.data(), v2.data() + v2.size());
     std::vector<size_t> merge_idcs = sorted_merge_indices(v1, v2);
     std::vector<size_t> ins_idcs(v2.size());
-    print(sort_idcs);
-    print(inv_sort_idcs);
-    print(merge_idcs);
     assert(ins_idcs.size() == inv_sort_idcs.size() && ins_idcs.size() == merge_idcs.size());
 
     std::vector<size_t>::iterator it_inv_sort = inv_sort_idcs.begin(), it_ins = ins_idcs.begin();
@@ -123,14 +79,4 @@ std::vector<size_t> searchsorted(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
         *it_ins = merge_idcs[*it_inv_sort];
     }
     return ins_idcs;
-}
-
-
-int main() {
-    Eigen::VectorXi v1(4), v2(7);
-    v1 << 0, 2, 3, 5;
-    v2 << 0, 3, 7, 3, 2, 6, 1;
-
-    std::vector<size_t> indices = searchsorted(v1, v2);
-    print(indices);
 }
