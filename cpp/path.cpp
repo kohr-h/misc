@@ -3,7 +3,8 @@
 #include <eigen3/Eigen/Dense>
 
 #include "path.hpp"
-#include "searchsorted.hpp"
+
+#include "interp.hpp"
 
 
 template <size_t ndim>

@@ -3,6 +3,9 @@
 #include <eigen3/Eigen/Dense>
 
 
+namespace interp {
+
+
 template <typename T>
 std::vector<size_t> sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
                                          Eigen::Matrix<T, Eigen::Dynamic, 1> const &v2) {
@@ -80,3 +83,6 @@ std::vector<size_t> searchsorted(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
     }
     return ins_idcs;
 }
+
+
+} // namespace interp
