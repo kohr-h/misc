@@ -1,13 +1,13 @@
 #include <iostream>
 #include <vector>
+#include <numeric>
 #include <eigen3/Eigen/Dense>
 
-
-namespace interp {
+#include "interp.hpp"
 
 
 template <typename T>
-std::vector<Eigen::Index> sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
+std::vector<Eigen::Index> interp::sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
                                                Eigen::Matrix<T, Eigen::Dynamic, 1> const &v2) {
     std::vector<Eigen::Index> idcs;
     Eigen::Index i1 = 0, i2 = 0, ins_idx = 0;
@@ -33,7 +33,7 @@ std::vector<Eigen::Index> sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 
 
 
 template <typename T>
-std::vector<Eigen::Index> sorting_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> &v) {
+std::vector<Eigen::Index> interp::sorting_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> &v) {
     // Adapted from https://stackoverflow.com/questions/1577475/c-sorting-and-keeping-track-of-indexes#12399290
 
     // Initialize original index locations 0, 1, ..., size-1
@@ -47,7 +47,7 @@ std::vector<Eigen::Index> sorting_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> &v
 
 
 template <typename T>
-std::vector<Eigen::Index> sorting_indices(std::vector<T> &v) {
+std::vector<Eigen::Index> interp::sorting_indices(std::vector<T> &v) {
     // Adapted from https://stackoverflow.com/questions/1577475/c-sorting-and-keeping-track-of-indexes#12399290
 
     // Initialize original index locations 0, 1, ..., size-1
@@ -61,8 +61,8 @@ std::vector<Eigen::Index> sorting_indices(std::vector<T> &v) {
 
 
 template <typename T>
-std::vector<Eigen::Index> searchsorted(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
-                                       Eigen::Matrix<T, Eigen::Dynamic, 1> v2) {
+std::vector<Eigen::Index> interp::searchsorted(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
+                                               Eigen::Matrix<T, Eigen::Dynamic, 1> v2) {
     // Same functionality as numpy.searchsorted
     // https://docs.scipy.org/doc/numpy/reference/generated/numpy.searchsorted.html
     // First sort the second array (passed by value), then return the indices of insertion of v2 into v1 such that
@@ -83,6 +83,3 @@ std::vector<Eigen::Index> searchsorted(Eigen::Matrix<T, Eigen::Dynamic, 1> const
     }
     return ins_idcs;
 }
-
-
-} // namespace interp

@@ -147,7 +147,7 @@ class Path {
 
     void init_rhs_() {
         for (size_t dim = 0; dim < ndim; ++dim ) {
-            sys_rhs_.push_back(system_rhs(bdry_conds_(dim, 0), bdry_conds_(dim, 1), dim));
+            sys_rhs_.push_back(this->system_rhs(bdry_conds_(dim, 0), bdry_conds_(dim, 1), dim));
         }
     }
 
@@ -162,4 +162,7 @@ class Path {
         Eigen::VectorXf alens = this->arc_length_lin_approx(params);
         total_length_ = alens(alens.size() - 1);
     }
-};
+}; // class Path
+
+template <size_t ndim>
+std::ostream &operator<<(std::ostream &out, Path<ndim> &p);
