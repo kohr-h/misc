@@ -1,17 +1,21 @@
 #pragma once
 
 #include <iostream>
-#include <stdexcept>
+#include <vector>
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Core>
 
 
-// Basic stuff
+// Flags for boundary conditions
+// Since Eigen arrays don't work well with enum types, we just take integer flags
 typedef int bc_t;
 static const bc_t BC_T_START = 0, BC_ZERO = 0, BC_NATURAL = 1, BC_CLAMP = 2, BC_T_END = 3;
 
+static const size_t NUM_PTS_PER_PIECE = 50;  // Discretization per path piece to compute total length
 
 // Partially specialized "typedefs"
+// The `<type>Impl` templates are to be subclassed by the intended final `<type>` can overload constructors and
+// other stuff.
 template <size_t ndim> using
 BdryCondsImpl = Eigen::Array<bc_t, 2, ndim>;
 
@@ -54,25 +58,25 @@ class BdryConds : public BdryCondsImpl<ndim> {
 template <size_t ndim>
 class Path {
   public:
-    Path(const Vectors<ndim> nodes, bc_t bdry_cond = BC_NATURAL) : nodes_(nodes), bdry_conds_(bdry_cond) {
+    Path(const Vectors<ndim> &nodes, bc_t bdry_cond = BC_NATURAL) : nodes_(nodes), bdry_conds_(bdry_cond) {
         assert(nodes.rows() >= 2);
         compute_matrices_();
         init_tangents_();
         init_rhs_();
         compute_tangents_();
-        compute_arc_lengths_();
+        compute_total_length_();
     }
 
-    Path(const Vectors<ndim> nodes, const BdryConds<ndim> bdry_conds) : nodes_(nodes), bdry_conds_(bdry_conds) {
+    Path(const Vectors<ndim> &nodes, const BdryConds<ndim> bdry_conds) : nodes_(nodes), bdry_conds_(bdry_conds) {
         assert(nodes.rows() >= 2);
         compute_matrices_();
         init_tangents_();
         init_rhs_();
         compute_tangents_();
-        compute_arc_lengths_();
+        compute_total_length_();
     }
 
-    Path(const Vectors<ndim> nodes, const Vector<ndim> tang_left, const Vector<ndim> tang_right,
+    Path(const Vectors<ndim> &nodes, const Vector<ndim> tang_left, const Vector<ndim> tang_right,
          bc_t bdry_cond = BC_CLAMP)
             : bdry_conds_(bdry_cond) {
         assert(nodes.rows() >= 2);
@@ -80,10 +84,10 @@ class Path {
         init_tangents_(tang_left, tang_right);
         init_rhs_();
         compute_tangents_();
-        compute_arc_lengths_();
+        compute_total_length_();
     }
 
-    Path(const Vectors<ndim> nodes, const Vector<ndim> tang_left, const Vector<ndim> tang_right,
+    Path(const Vectors<ndim> &nodes, const Vector<ndim> tang_left, const Vector<ndim> tang_right,
          const BdryConds<ndim> bdry_conds)
             : bdry_conds_(bdry_conds) {
         assert(nodes.rows() >= 2);
@@ -91,17 +95,17 @@ class Path {
         init_tangents_(tang_left, tang_right);
         init_rhs_();
         compute_tangents_();
-        compute_arc_lengths_();
+        compute_total_length_();
     }
 
     ~Path() {}
 
     const Vectors<ndim> nodes() const { return nodes_; }
-    size_t num_nodes() const { return nodes().rows(); }
-    size_t num_pieces() const { return num_nodes() - 1; }
+    Eigen::Index num_nodes() const { return nodes().rows(); }
+    Eigen::Index num_pieces() const { return num_nodes() - 1; }
     const Vectors<ndim> tangents() const { return tangents_; }
     const BdryConds<ndim> bdry_conds() const { return bdry_conds_; }
-    const Eigen::VectorXf arc_lengths() const { return arc_lengths_; }
+    float total_length() const { return total_length_; }
 
     Vector<ndim> operator()(float param);
     Vectors<ndim> operator()(Eigen::VectorXf params);
@@ -115,7 +119,7 @@ class Path {
     const Vectors<ndim> nodes_;
     const BdryConds<ndim> bdry_conds_;
     Vectors<ndim> tangents_;
-    Eigen::VectorXf arc_lengths_;
+    float total_length_;
     std::vector<Eigen::MatrixXf> sys_matrices_;
     std::vector<Eigen::PartialPivLU<Eigen::MatrixXf>> sys_matrix_decomps_;
     std::vector<Eigen::VectorXf> sys_rhs_;
@@ -149,20 +153,13 @@ class Path {
 
     void compute_tangents_() {
         for (size_t dim = 0; dim < ndim; ++dim) {
-            tangents_.col(dim) = sys_matrix_decomps_[dim].solve(sys_rhs_[dim]);
+            tangents_.col(dim) = this->sys_matrix_decomps_[dim].solve(this->sys_rhs_[dim]);
         }
     }
 
-    void compute_arc_lengths_() {
-        arc_lengths_.resize(num_nodes());
-        arc_lengths_(0) = 0.0;
-        for (size_t i = 1; i < num_nodes(); ++i) {
-            arc_lengths_(i) = (nodes_.row(i) - nodes_.row(i - 1)).norm();
-        }
-        float acc = 0.0;
-        for (size_t i = 0; i < num_nodes(); ++i) {
-            acc += arc_lengths_(i);
-            arc_lengths_(i) = acc;
-        }
+    void compute_total_length_() {
+        Eigen::VectorXf params = Eigen::VectorXf::LinSpaced(NUM_PTS_PER_PIECE * num_pieces(), 0, num_pieces());
+        Eigen::VectorXf alens = this->arc_length_lin_approx(params);
+        total_length_ = alens(alens.size() - 1);
     }
 };

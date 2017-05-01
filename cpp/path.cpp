@@ -1,9 +1,8 @@
 #include <iostream>
-#include <stdexcept>
+#include <vector>
 #include <eigen3/Eigen/Dense>
 
 #include "path.hpp"
-
 #include "interp.hpp"
 
 
@@ -19,10 +18,10 @@ std::ostream &operator<<(std::ostream &out, Path<ndim> &p) {
 
 template <size_t ndim>
 const Eigen::MatrixXf Path<ndim>::system_matrix(bc_t bc_left, bc_t bc_right) {
-    size_t n_nodes = num_nodes();
+    Eigen::Index n_nodes = num_nodes();
     Eigen::MatrixXf sys_mat = Eigen::MatrixXf::Zero(n_nodes, n_nodes);
 
-    for (size_t row = 1; row < n_nodes - 1; ++row) {
+    for (Eigen::Index row = 1; row < n_nodes - 1; ++row) {
         sys_mat(row, row) = 4.0;
         sys_mat(row, row - 1) = 1.0;
         sys_mat(row, row + 1) = 1.0;
@@ -58,10 +57,10 @@ const Eigen::MatrixXf Path<ndim>::system_matrix(bc_t bc_left, bc_t bc_right) {
 template <size_t ndim>
 const Eigen::VectorXf Path<ndim>::system_rhs(bc_t bc_left, bc_t bc_right, size_t dim) {
     Vectors<ndim> nds = nodes();
-    size_t n_nodes = nds.rows();
+    Eigen::Index n_nodes = nds.rows();
     Eigen::VectorXf sys_rhs(n_nodes);
 
-    for (size_t i = 1; i < n_nodes - 1; ++i) {
+    for (Eigen::Index i = 1; i < n_nodes - 1; ++i) {
         sys_rhs(i) = 3.0 * (nds(i + 1, dim) - nds(i - 1, dim));
     }
 
@@ -106,6 +105,12 @@ const Eigen::VectorXf Path<ndim>::arc_length_lin_approx(Eigen::VectorXf params) 
         acc += alens(i);
         alens(i) = acc;
     }
+    // Update total length if approximation was finer than the initial one and the parameters went all the way to
+    // the end
+    if (static_cast<size_t>(params.size()) > NUM_PTS_PER_PIECE * num_pieces() &&
+            fabsf(params(params.size() - 1) - num_pieces()) < 1e-6) {
+        total_length_ = alens(alens.size() - 1);
+    }
     return alens;
 }
 
@@ -119,23 +124,18 @@ const Eigen::VectorXf Path<ndim>::arc_length_params_lin_approx(Eigen::VectorXf p
     // This is the discrete counterpart of reparametrization with respect to arc length.
     //
     // See https://en.wikipedia.org/wiki/Differential_geometry_of_curves#Length_and_natural_parametrization for details.
-    Eigen::VectorXf alen_parms(params.size());
+    Eigen::Index num_params = params.size();
+    Eigen::VectorXf alen_params(num_params);
     Eigen::VectorXf alens = arc_length_lin_approx(params);
-    float total_len = alens(alens.size() - 1);
+    assert((arc_lengths.array() <= total_length()).all());
+    std::vector<size_t> pieces = interp::searchsorted(arc_lengths, alens);
 
-    for (int i = 1; i < params.size(); ++i) {
+    for (Eigen::Index i = 0; i < num_params; ++i) {
         // Interpolate the target arc length in the computed arc lengths.
-        unsigned int interp_idx = static_cast<unsigned int>(floor());
-        float s = param - piece;  // Normalized to [0, 1]
-
-        alens(i) = (path_pts.row(i) - path_pts.row(i - 1)).norm();
+        float s = alens(i) - pieces[i];  // Normalized to [0, 1]
+        alen_params(i) = (1.0f - s) * params(pieces[i]) + s * params(pieces[i + 1]);
     }
-    float acc = 0.0;
-    for (int i = 0; i < params.size(); ++i) {
-        acc += alens(i);
-        alens(i) = acc;
-    }
-    return alens;
+    return alen_params;
 }
 
 
@@ -191,7 +191,10 @@ int main () {
 
     std::cout << p.tangents() << std::endl << "-----" << std::endl;
     std::cout << p(2.5) << std::endl << "-----" << std::endl;
-    Eigen::VectorXf params = Eigen::VectorXf::LinSpaced(50, 0, 4);
+    Eigen::VectorXf params = Eigen::VectorXf::LinSpaced(500, 0, 4);
     std::cout << p(params) << std::endl << "-----" << std::endl;
     std::cout << p.arc_length_lin_approx(params) << std::endl << "-----" << std::endl;
+    std::cout << p.total_length() << std::endl << "-----" << std::endl;
+    Eigen::VectorXf target_alens = Eigen::VectorXf::LinSpaced(50, 0, 11);
+    std::cout << p.arc_length_params_lin_approx(params, target_alens) << std::endl << "-----" << std::endl;
 }
