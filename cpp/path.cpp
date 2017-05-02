@@ -6,34 +6,38 @@
 #include "path.hpp"
 
 
-// TODO: move to separate file
-// ---------------------------------------------------------------------------
-
-
-namespace interp {
-
-
 template <typename T>
-std::vector<Eigen::Index> sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
-                                               Eigen::Matrix<T, Eigen::Dynamic, 1> const &v2);
+std::vector<Eigen::DenseIndex> sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
+                                                    Eigen::Matrix<T, Eigen::Dynamic, 1> const &v2) {
+    std::vector<Eigen::DenseIndex> idcs;
+    Eigen::DenseIndex i1 = 0, i2 = 0, ins_idx = 0;
+    while (true) {
+        if (i2 == v2.size()) {
+            break;
+        }
 
-template <typename T>
-std::vector<Eigen::Index> sorting_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> &v);
-
-template <typename T>
-std::vector<Eigen::Index> sorting_indices(std::vector<T> &v);
-
-template <typename T>
-std::vector<Eigen::Index> searchsorted(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
-                                       Eigen::Matrix<T, Eigen::Dynamic, 1> v2);
-
-} // namespace interp
-
-// ---------------------------------------------------------------------------
+        if (i1 == v1.size()) {
+            idcs.push_back(ins_idx);
+            if (ins_idx < v1.size()) {
+                ++ins_idx;
+            }
+            ++i2;
+        } else {
+            if (v1(i1) < v2(i2)) {
+                ++ins_idx;
+                ++i1;
+            } else {
+                idcs.push_back(ins_idx);
+                ++i2;
+            }
+        }
+    }
+    return idcs;
+}
 
 
 template <size_t ndim>
-std::ostream &operator<<(std::ostream &out, Path<ndim> &p) {
+std::ostream &operator<<(std::ostream &out, Path<ndim> const &p) {
     out << "Path with nodes" << std::endl
         << p.nodes() << std::endl
         << "and boundary conditions" << std::endl
@@ -43,11 +47,11 @@ std::ostream &operator<<(std::ostream &out, Path<ndim> &p) {
 
 
 template <size_t ndim>
-const Eigen::MatrixXf Path<ndim>::system_matrix(bc_t bc_left, bc_t bc_right) {
-    Eigen::Index n_nodes = num_nodes();
+Eigen::MatrixXf Path<ndim>::system_matrix(bc_t bc_left, bc_t bc_right) const {
+    Eigen::DenseIndex n_nodes = num_nodes();
     Eigen::MatrixXf sys_mat = Eigen::MatrixXf::Zero(n_nodes, n_nodes);
 
-    for (Eigen::Index row = 1; row < n_nodes - 1; ++row) {
+    for (Eigen::DenseIndex row = 1; row < n_nodes - 1; ++row) {
         sys_mat(row, row) = 4.0;
         sys_mat(row, row - 1) = 1.0;
         sys_mat(row, row + 1) = 1.0;
@@ -81,12 +85,12 @@ const Eigen::MatrixXf Path<ndim>::system_matrix(bc_t bc_left, bc_t bc_right) {
 
 
 template <size_t ndim>
-const Eigen::VectorXf Path<ndim>::system_rhs(bc_t bc_left, bc_t bc_right, size_t dim) {
+Eigen::VectorXf Path<ndim>::system_rhs(bc_t bc_left, bc_t bc_right, size_t dim) const {
     Vectors<ndim> nds = nodes();
-    Eigen::Index n_nodes = nds.rows();
+    Eigen::DenseIndex n_nodes = nds.rows();
     Eigen::VectorXf sys_rhs(n_nodes);
 
-    for (Eigen::Index i = 1; i < n_nodes - 1; ++i) {
+    for (Eigen::DenseIndex i = 1; i < n_nodes - 1; ++i) {
         sys_rhs(i) = 3.0 * (nds(i + 1, dim) - nds(i - 1, dim));
     }
 
@@ -115,7 +119,7 @@ const Eigen::VectorXf Path<ndim>::system_rhs(bc_t bc_left, bc_t bc_right, size_t
 
 
 template <size_t ndim>
-const Eigen::VectorXf Path<ndim>::arc_length_lin_approx(Eigen::VectorXf params) {
+Eigen::VectorXf Path<ndim>::arc_length_lin_approx(Eigen::VectorXf const &params) const {
     assert((params.array() >= 0).all() && (params.array() <= num_pieces()).all());
 
     // Compute the path points parametrized by `params`. Then compute the arc lengths by accumulating
@@ -131,49 +135,56 @@ const Eigen::VectorXf Path<ndim>::arc_length_lin_approx(Eigen::VectorXf params) 
         acc += alens(i);
         alens(i) = acc;
     }
-    // Update total length if approximation was finer than the initial one and the parameters went all the way to
-    // the end
-    if (static_cast<size_t>(params.size()) > NUM_PTS_PER_PIECE * num_pieces() &&
-            fabsf(params(params.size() - 1) - num_pieces()) < 1e-6) {
-        total_length_ = alens(alens.size() - 1);
-    }
     return alens;
 }
 
 
 template <size_t ndim>
-const Eigen::VectorXf Path<ndim>::arc_length_params_lin_approx(Eigen::VectorXf params, Eigen::VectorXf arc_lengths) {
-    assert((params.array() >= 0).all() && (params.array() <= num_pieces()).all());
-
-    // Compute the arc lengths using path points at `params`. Then interpolate the parameters such that the
-    // corresponding path points yield the given `arc_lengths`.
+Eigen::VectorXf Path<ndim>::arc_length_params_lin_approx(size_t num_params) const {
+    // Interpolate the parameters that yield points that are equally spaced with respect to arc length.
     // This is the discrete counterpart of reparametrization with respect to arc length.
     //
     // See https://en.wikipedia.org/wiki/Differential_geometry_of_curves#Length_and_natural_parametrization for details.
-    Eigen::Index num_params = params.size();
     Eigen::VectorXf alen_params(num_params);
+    Eigen::VectorXf params = Eigen::VectorXf::LinSpaced(num_params, 0.0f, num_pieces());
     Eigen::VectorXf alens = arc_length_lin_approx(params);
-    std::cout << alens.transpose() << std::endl;
-    assert((arc_lengths.array() <= total_length()).all());
-    std::vector<Eigen::Index> pieces = interp::searchsorted(arc_lengths, alens);
-    std::cout << "alive" << std::endl;
+    Eigen::VectorXf target_alens = Eigen::VectorXf::LinSpaced(num_params, 0.0f, total_length(num_params));
+    std::vector<Eigen::DenseIndex> pieces = sorted_merge_indices(alens, target_alens);
+
+    std::cout << "linspaced params:" << std::endl << params.transpose() << std::endl;
+    std::cout << "target_alens:" << std::endl << target_alens.transpose() << std::endl;
+    std::cout << "alens:" << std::endl << alens.transpose() << std::endl;
+
+    std::cout << "pieces:" << std::endl;
     for (auto v: pieces) { std::cout << v << " "; }
     std::cout << std::endl;
 
-    for (Eigen::Index i = 0; i < num_params; ++i) {
+    std::cout << "s values:" << std::endl;
+    for (size_t i = 0; i < num_params; ++i) {
         // Interpolate the target arc length in the computed arc lengths.
-        float s = alens(i) - pieces[i];  // Normalized to [0, 1]
-        alen_params(i) = (1.0f - s) * params(pieces[i]) + s * params(pieces[i + 1]);
+        float s;  // Normalized distance to target node to the left
+        if (pieces[i] == 0) {
+            s = 0.0f;
+            pieces[i] = 1;
+        } else if (static_cast<size_t>(pieces[i]) == num_params) {
+            s = 1.0f;
+            pieces[i] = num_params - 1;
+        } else {
+            s = (target_alens(i) - alens(pieces[i] - 1)) / (alens(pieces[i]) - alens(pieces[i] - 1));
+        }
+        std::cout << s << " ";
+        alen_params(i) = (1.0f - s) * params(pieces[i] - 1) + s * params(pieces[i]);
     }
+    std::cout << std::endl;
     return alen_params;
 }
 
 
 template <size_t ndim>
-Vector<ndim> Path<ndim>::operator()(float param) {
+Vector<ndim> Path<ndim>::operator()(float param) const {
     assert((param >= 0) && (param <= num_pieces()));
 
-    unsigned int piece = static_cast<unsigned int>(floor(param));
+    auto piece = static_cast<Eigen::DenseIndex>(floor(param));
     float s = param - piece;  // Normalized to [0, 1]
     if (piece == num_pieces()) { return nodes().row(num_pieces()); }  // right end of the parameter range
 
@@ -189,7 +200,7 @@ Vector<ndim> Path<ndim>::operator()(float param) {
 
 
 template <size_t ndim>
-Vectors<ndim> Path<ndim>::operator()(Eigen::VectorXf params) {
+Vectors<ndim> Path<ndim>::operator()(Eigen::VectorXf const &params) const {
     Vectors<ndim> points(params.size());
     for (int i = 0; i < params.size(); ++i) {
         points.row(i) = this->operator()(params(i));
@@ -197,89 +208,6 @@ Vectors<ndim> Path<ndim>::operator()(Eigen::VectorXf params) {
     return points;
 }
 
-
-// TODO: move to separate file
-// ---------------------------------------------------------------------------
-
-template <typename T>
-std::vector<Eigen::Index> interp::sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
-                                                       Eigen::Matrix<T, Eigen::Dynamic, 1> const &v2) {
-    std::vector<Eigen::Index> idcs;
-    Eigen::Index i1 = 0, i2 = 0, ins_idx = 0;
-    while (true) {
-        if (i2 == v2.size()) break;
-
-        if (i1 == v1.size()) {
-            idcs.push_back(ins_idx);
-            if (ins_idx < v1.size()) ++ins_idx;
-            ++i2;
-        } else {
-            if (v1(i1) < v2(i2)) {
-                ++i1;
-                ++ins_idx;
-            } else {
-                idcs.push_back(ins_idx);
-                ++i2;
-            }
-        }
-    }
-    return idcs;
-}
-
-
-template <typename T>
-std::vector<Eigen::Index> interp::sorting_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> &v) {
-    // Adapted from https://stackoverflow.com/questions/1577475/c-sorting-and-keeping-track-of-indexes#12399290
-
-    // Initialize original index locations 0, 1, ..., size-1
-    std::vector<Eigen::Index> idx(v.size());
-    iota(idx.begin(), idx.end(), 0);
-
-    // Sort indexes based on comparing values in v
-    std::sort(idx.begin(), idx.end(), [&v](Eigen::Index i1, Eigen::Index i2) {return v(i1) < v(i2);});
-    return idx;
-}
-
-
-template <typename T>
-std::vector<Eigen::Index> interp::sorting_indices(std::vector<T> &v) {
-    // Adapted from https://stackoverflow.com/questions/1577475/c-sorting-and-keeping-track-of-indexes#12399290
-
-    // Initialize original index locations 0, 1, ..., size-1
-    std::vector<Eigen::Index> idx(v.size());
-    iota(idx.begin(), idx.end(), 0);
-
-    // Sort indexes based on comparing values in v
-    std::sort(idx.begin(), idx.end(), [&v](Eigen::Index i1, Eigen::Index i2) {return v[i1] < v[i2];});
-    return idx;
-}
-
-
-template <typename T>
-std::vector<Eigen::Index> interp::searchsorted(Eigen::Matrix<T, Eigen::Dynamic, 1> const &v1,
-                                               Eigen::Matrix<T, Eigen::Dynamic, 1> v2) {
-    // Same functionality as numpy.searchsorted
-    // https://docs.scipy.org/doc/numpy/reference/generated/numpy.searchsorted.html
-    // First sort the second array (passed by value), then return the indices of insertion of v2 into v1 such that
-    // the resulting array remains sorted. For equal values, the smaller index is taken.
-
-    // TODO: this sorts 3 times, do it in one go!
-    // Get indices that sort v2 ("argsort"), and invert the mapping by sorting the index array
-    std::vector<Eigen::Index> sort_idcs = sorting_indices(v2);
-    std::vector<Eigen::Index> inv_sort_idcs = sorting_indices(sort_idcs);
-    std::sort(v2.data(), v2.data() + v2.size());
-    std::vector<Eigen::Index> merge_idcs = sorted_merge_indices(v1, v2);
-    std::vector<Eigen::Index> ins_idcs(v2.size());
-    assert(ins_idcs.size() == inv_sort_idcs.size() && ins_idcs.size() == merge_idcs.size());
-
-    std::vector<Eigen::Index>::iterator it_inv_sort = inv_sort_idcs.begin(), it_ins = ins_idcs.begin();
-    for (; it_inv_sort != inv_sort_idcs.end(); ++it_inv_sort, ++it_ins) {
-        *it_ins = merge_idcs[*it_inv_sort];
-    }
-    return ins_idcs;
-}
-
-// ---------------------------------------------------------------------------
 
 int main () {
     Vectors<2> v(4);
@@ -293,22 +221,12 @@ int main () {
         -1, 2,
          0, 2,
          5, 5;
-    std::cout << v << std::endl << "-----" << std::endl;
     Path<2> p(v);
-    std::cout << p << std::endl << "-----" << std::endl;
-    BdryConds<2> bcs(BC_ZERO);
-    std::cout << bcs << std::endl << "-----" << std::endl;
-
-    Eigen::MatrixXf m = p.system_matrix(BC_CLAMP, BC_NATURAL);
-    std::cout << m << std::endl << "-----" << std::endl;
-
-    std::cout << p.tangents() << std::endl << "-----" << std::endl;
-    std::cout << p(2.5) << std::endl << "-----" << std::endl;
+    // std::cout << p << std::endl << "-----" << std::endl;
     Eigen::VectorXf params = Eigen::VectorXf::LinSpaced(10, 0, 4);
-    std::cout << p(params) << std::endl << "-----" << std::endl;
-    std::cout << p.arc_length_lin_approx(params) << std::endl << "-----" << std::endl;
-    std::cout << p.total_length() << std::endl << "-----" << std::endl;
-    Eigen::VectorXf target_alens = Eigen::VectorXf::LinSpaced(10, 0, 11);
-    std::cout << "==============" << std::endl;
-    std::cout << p.arc_length_params_lin_approx(params, target_alens) << std::endl << "-----" << std::endl;
+    std::cout << "total length: " << p.total_length(50) << std::endl << "-----" << std::endl;
+    auto alen_params = p.arc_length_params_lin_approx(20);
+    std::cout << "arc length params:" << std::endl << alen_params.transpose() << std::endl << "-----" << std::endl;
+    std::cout << "arc length at new parameters:" << std::endl << p.arc_length_lin_approx(alen_params).transpose()
+              << std::endl;
 }
