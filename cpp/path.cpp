@@ -6,10 +6,6 @@
 #include "glm/glm.hpp"
 #include "path.hpp"
 
-// -------------------------------------------------------------------------//
-
-// Helper functions
-
 template <typename T>
 std::vector<Eigen::DenseIndex>
 sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> const& v1,
@@ -40,160 +36,112 @@ sorted_merge_indices(Eigen::Matrix<T, Eigen::Dynamic, 1> const& v1,
     return idcs;
 }
 
-// -------------------------------------------------------------------------//
-
-// Boundary condition handling
-
-template <size_t ndim>
-BoundaryConditions<ndim>::BoundaryConditions(boundary_condition bc_left,
-                                             boundary_condition bc_right) {
-    bdry_conds_.resize(0);
-    for (size_t dim = 0; dim < ndim; dim++) {
-        bdry_conds_.push_back(std::pair<boundary_condition, boundary_condition>(
-            bc_left, bc_right));
-    }
-}
-
-std::ostream& operator<<(std::ostream& out, boundary_condition bc) {
+std::ostream& operator<<(std::ostream& out, bdry_cond bc) {
     switch (bc) {
-    case boundary_condition::natural:
+    case bdry_cond::natural:
         out << "n";
         break;
-    case boundary_condition::clamp:
+    case bdry_cond::clamp:
         out << "c";
         break;
-    case boundary_condition::zero:
+    case bdry_cond::zero:
         out << "0";
+        break;
+    default:
         break;
     }
     return out;
 }
 
-template <size_t ndim>
-std::ostream& operator<<(std::ostream& out,
-                         BoundaryConditions<ndim> const& bcs) {
-    std::cout << "Boundary conditions" << std::endl;
+std::ostream& operator<<(std::ostream& out, BdryConds3 const& bcs) {
+    std::cout << "boundary conditions" << std::endl;
     for (auto bc : bcs.bdry_conds()) {
         std::cout << bc.first << " " << bc.second << std::endl;
     }
     return out;
 }
 
-template <size_t ndim>
-std::pair<boundary_condition, boundary_condition> BoundaryConditions<ndim>::
-operator[](size_t index) const {
-    return bdry_conds_[index];
-}
-
-// -------------------------------------------------------------------------//
-
-// Path constructors
-
-template <size_t ndim>
-Path<ndim>::Path(Eigen::Matrix<float, Eigen::Dynamic, ndim> const& nodes,
-                 boundary_condition bc)
+Path3::Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes, bdry_cond bc)
     : nodes_(nodes), bdry_conds_(bc) {
     assert(nodes.rows() >= 2);
     compute_matrices_();
     init_tangents_();
     init_rhs_();
     compute_tangents_();
+    init_a_and_b_vecs_();
 }
-
-template <size_t ndim>
-Path<ndim>::Path(Eigen::Matrix<float, Eigen::Dynamic, ndim> const& nodes,
-                 BoundaryConditions<ndim> const& bcs)
+Path3::Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
+             BdryConds3 const& bcs)
     : nodes_(nodes), bdry_conds_(bcs) {
     assert(nodes.rows() >= 2);
     compute_matrices_();
     init_tangents_();
     init_rhs_();
     compute_tangents_();
+    init_a_and_b_vecs_();
 }
-
-template <size_t ndim>
-Path<ndim>::Path(Eigen::Matrix<float, Eigen::Dynamic, ndim> const& nodes,
-                 Eigen::Matrix<float, 1, ndim> tang_left,
-                 Eigen::Matrix<float, 1, ndim> tang_right,
-                 boundary_condition bc)
+Path3::Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
+             Eigen::RowVector3f tang_left, Eigen::RowVector3f tang_right,
+             bdry_cond bc)
     : nodes_(nodes), bdry_conds_(bc) {
     assert(nodes.rows() >= 2);
     compute_matrices_();
     init_tangents_(tang_left, tang_right);
     init_rhs_();
     compute_tangents_();
+    init_a_and_b_vecs_();
 }
-
-template <size_t ndim>
-Path<ndim>::Path(Eigen::Matrix<float, Eigen::Dynamic, ndim> const& nodes,
-                 Eigen::Matrix<float, 1, ndim> tang_left,
-                 Eigen::Matrix<float, 1, ndim> tang_right,
-                 BoundaryConditions<ndim> const& bcs)
+Path3::Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
+             Eigen::RowVector3f tang_left, Eigen::RowVector3f tang_right,
+             BdryConds3 const& bcs)
     : nodes_(nodes), bdry_conds_(bcs) {
     assert(nodes.rows() >= 2);
     compute_matrices_();
     init_tangents_(tang_left, tang_right);
     init_rhs_();
     compute_tangents_();
+    init_a_and_b_vecs_();
 }
 
-// Private functions (for initialization)
+Eigen::RowVector3f Path3::operator()(float param) const {
+    assert((param >= 0) && (param <= num_pieces()));
 
-template <size_t ndim>
-void Path<ndim>::compute_matrices_() {
-    for (size_t dim = 0; dim < ndim; ++dim) {
-        Eigen::MatrixXf sys_mat =
-            system_matrix(bdry_conds_[dim].first, bdry_conds_[dim].second);
-        Eigen::PartialPivLU<Eigen::MatrixXf> decomp = sys_mat.partialPivLu();
-        sys_matrix_decomps_.push_back(decomp);
+    auto piece = static_cast<Eigen::DenseIndex>(floor(param));
+    float s = param - piece; // Normalized to [0, 1]
+    if (piece == num_pieces()) {
+        return nodes().row(num_pieces());
+    } // right end of the parameter range
+
+    // Compute path points as
+    //     path(s) = p[k] + s(p[k+1] - p[k]) + s(1-s)((1-s)a + sb),
+    // where p = nodes, s = param in [0, 1], and a, b as below.
+    // See https://en.wikipedia.org/wiki/Spline_interpolation
+    Eigen::RowVector3f diff = nodes().row(piece + 1) - nodes().row(piece);
+    Eigen::RowVector3f a = tangents().row(piece) - diff;
+    Eigen::RowVector3f b = diff - tangents().row(piece + 1);
+    return nodes().row(piece) + s * diff +
+           s * (1.0 - s) * ((1.0 - s) * a + s * b);
+}
+
+Eigen::Matrix<float, Eigen::Dynamic, 3> Path3::
+operator()(Eigen::VectorXf const& params) const {
+    Eigen::Matrix<float, Eigen::Dynamic, 3> points(params.size(), 3);
+    for (Eigen::DenseIndex i = 0; i < params.size(); ++i) {
+        points.row(i) = this->operator()(params(i));
     }
+    return points;
 }
 
-template <size_t ndim>
-void Path<ndim>::init_tangents_() {
-    const Eigen::Matrix<float, 1, ndim> tang_left =
-        nodes_.row(1) - nodes_.row(0);
-    const Eigen::Matrix<float, 1, ndim> tang_right =
-        nodes_.row(num_nodes() - 1) - nodes_.row(num_nodes() - 2);
-    init_tangents_(tang_left, tang_right);
-}
-
-template <size_t ndim>
-void Path<ndim>::init_tangents_(
-    Eigen::Matrix<float, 1, ndim> const& tang_left,
-    Eigen::Matrix<float, 1, ndim> const& tang_right) {
-    tangents_.resize(num_nodes(), ndim);
-    tangents_.row(0) = tang_left;
-    tangents_.row(num_nodes() - 1) = tang_right;
-}
-
-template <size_t ndim>
-void Path<ndim>::init_rhs_() {
-    for (size_t dim = 0; dim < ndim; ++dim) {
-        sys_rhs_.push_back(this->system_rhs(bdry_conds_[dim].first,
-                                            bdry_conds_[dim].second, dim));
-    }
-}
-
-template <size_t ndim>
-void Path<ndim>::compute_tangents_() {
-    for (size_t dim = 0; dim < ndim; ++dim) {
-        tangents_.col(dim) =
-            this->sys_matrix_decomps_[dim].solve(this->sys_rhs_[dim]);
-    }
-}
-
-// Other member functions
-
-template <size_t ndim>
-Eigen::MatrixXf Path<ndim>::system_matrix(boundary_condition bc_left,
-                                          boundary_condition bc_right) const {
-    // Return the matrix of the equation system for the tangents of the path at
+Eigen::MatrixXf Path3::system_matrix(bdry_cond bc_left,
+                                     bdry_cond bc_right) const {
+    // Return the matrix of the equation system for the tangents of the path
+    // at
     // the given nodes.
     Eigen::DenseIndex n_nodes = num_nodes();
     Eigen::MatrixXf sys_mat = Eigen::MatrixXf::Zero(n_nodes, n_nodes);
 
-    // All rows except the first and last have an entry 4.0 on the diagonal and
+    // All rows except the first and last have an entry 4.0 on the diagonal
+    // and
     // 1.0 on the first off-diagonals,
     // elsewhere 0.0.
     for (Eigen::DenseIndex row = 1; row < n_nodes - 1; ++row) {
@@ -203,12 +151,12 @@ Eigen::MatrixXf Path<ndim>::system_matrix(boundary_condition bc_left,
     }
 
     switch (bc_left) {
-    case boundary_condition::zero:
-    case boundary_condition::clamp:
+    case bdry_cond::zero:
+    case bdry_cond::clamp:
         // Just an identity equation, keeps original left tangent
         sys_mat(0, 0) = 1.0;
         break;
-    case boundary_condition::natural:
+    case bdry_cond::natural:
         sys_mat(0, 0) = 2.0;
         sys_mat(0, 1) = 1.0;
         break;
@@ -216,12 +164,12 @@ Eigen::MatrixXf Path<ndim>::system_matrix(boundary_condition bc_left,
         std::cout << "Invalid left boundary condition " << bc_left << "!";
     }
     switch (bc_right) {
-    case boundary_condition::zero:
-    case boundary_condition::clamp:
+    case bdry_cond::zero:
+    case bdry_cond::clamp:
         // Just an identity equation, keeps original right tangent
         sys_mat(n_nodes - 1, n_nodes - 1) = 1.0;
         break;
-    case boundary_condition::natural:
+    case bdry_cond::natural:
         sys_mat(n_nodes - 1, n_nodes - 1) = 2.0;
         sys_mat(n_nodes - 1, n_nodes - 2) = 1.0;
         break;
@@ -230,14 +178,12 @@ Eigen::MatrixXf Path<ndim>::system_matrix(boundary_condition bc_left,
     }
     return sys_mat;
 }
-
-template <size_t ndim>
-Eigen::VectorXf Path<ndim>::system_rhs(boundary_condition bc_left,
-                                       boundary_condition bc_right,
-                                       size_t dim) const {
-    // Return the right-hand side of the equation system for the tangents of the
+Eigen::VectorXf Path3::system_rhs(bdry_cond bc_left, bdry_cond bc_right,
+                                  int dim) const {
+    // Return the right-hand side of the equation system for the tangents of
+    // the
     // path at the given nodes.
-    Eigen::Matrix<float, Eigen::Dynamic, ndim> nds = nodes();
+    Eigen::Matrix<float, Eigen::Dynamic, 3> nds = nodes();
     Eigen::DenseIndex n_nodes = nds.rows();
     Eigen::VectorXf sys_rhs(n_nodes);
 
@@ -249,64 +195,104 @@ Eigen::VectorXf Path<ndim>::system_rhs(boundary_condition bc_left,
     }
 
     switch (bc_left) {
-    case boundary_condition::zero:
+    case bdry_cond::zero:
         sys_rhs(0) = 0.0;
         break;
-    case boundary_condition::clamp:
+    case bdry_cond::clamp:
         sys_rhs(0) = tangents()(0, dim);
         break;
-    case boundary_condition::natural:
+    case bdry_cond::natural:
         sys_rhs(0) = 3.0 * (nds(1, dim) - nds(0, dim));
         break;
     default:
-        std::cout << "Invalid left boundary condition " << bc_left << "!";
+        break;
     }
     switch (bc_right) {
-    case boundary_condition::zero:
+    case bdry_cond::zero:
         sys_rhs(n_nodes - 1) = 0.0;
         break;
-    case boundary_condition::clamp:
+    case bdry_cond::clamp:
         sys_rhs(n_nodes - 1) = nds(n_nodes - 1, dim);
         break;
-    case boundary_condition::natural:
+    case bdry_cond::natural:
         sys_rhs(n_nodes - 1) =
             3.0 * (nds(n_nodes - 1, dim) - nds(n_nodes - 2, dim));
         break;
     default:
-        std::cout << "Invalid right boundary condition " << bc_right << "!";
+        break;
     }
     return sys_rhs;
 }
 
-template <size_t ndim>
-Eigen::VectorXf
-Path<ndim>::arc_length_lin_approx(Eigen::VectorXf const& params) const {
-    // Compute an approximation to the arc lengths at `params` using a piecewise
-    // constant path instead of the
-    // actual spline.
-    // This is done by computing the path points at `params` and then
-    // accumulating the lengths of the differences
-    // of the points.
-    assert((params.array() >= 0).all() &&
-           (params.array() <= num_pieces()).all());
-    Eigen::Matrix<float, Eigen::Dynamic, ndim> path_pts =
-        this->operator()(params);
+void Path3::compute_matrices_() {
+    for (int dim = 0; dim < 3; ++dim) {
+        Eigen::MatrixXf sys_mat =
+            system_matrix(bdry_conds_[dim].first, bdry_conds_[dim].second);
+        Eigen::PartialPivLU<Eigen::MatrixXf> decomp = sys_mat.partialPivLu();
+        sys_matrix_decomps_.push_back(decomp);
+    }
+}
+
+void Path3::init_tangents_() {
+    const Eigen::RowVector3f tang_left = nodes_.row(1) - nodes_.row(0);
+    const Eigen::RowVector3f tang_right =
+        nodes_.row(num_nodes() - 1) - nodes_.row(num_nodes() - 2);
+    init_tangents_(tang_left, tang_right);
+}
+
+void Path3::init_tangents_(Eigen::RowVector3f const& tang_left,
+                           Eigen::RowVector3f const& tang_right) {
+    tangents_.resize(num_nodes(), 3);
+    tangents_.row(0) = tang_left;
+    tangents_.row(num_nodes() - 1) = tang_right;
+}
+
+void Path3::init_rhs_() {
+    for (size_t dim = 0; dim < 3; ++dim) {
+        sys_rhs_.push_back(this->system_rhs(bdry_conds_[dim].first,
+                                            bdry_conds_[dim].second, dim));
+    }
+}
+
+void Path3::compute_tangents_() {
+    for (int dim = 0; dim < 3; ++dim) {
+        tangents_.col(dim) =
+            this->sys_matrix_decomps_[dim].solve(this->sys_rhs_[dim]);
+    }
+}
+
+void Path3::init_a_and_b_vecs_() {
+    a_vecs_.resize(num_pieces(), 3);
+    b_vecs_.resize(num_pieces(), 3);
+    for (Eigen::DenseIndex i = 0; i < num_pieces(); ++i) {
+        a_vecs_.row(i) = tangents_.row(i) - (nodes_.row(i + 1) - nodes_.row(i));
+        b_vecs_.row(i) =
+            (nodes_.row(i + 1) - nodes_.row(i)) - tangents_.row(i + 1);
+    }
+}
+
+Eigen::VectorXf Path3::arc_length_lin_approx(size_t num_params) const {
+    // Compute an approximation to the arc lengths at `num_params` equidistant
+    // parameters using a piecewise constant path instead of the actual spline.
+    // This is done by computing the path points at the parameters and then
+    // accumulating the lengths of the differences of the points.
+    Eigen::VectorXf params =
+        Eigen::VectorXf::LinSpaced(num_params, 0, num_pieces());
+    Eigen::Matrix<float, Eigen::Dynamic, 3> path_pts = this->operator()(params);
     Eigen::VectorXf alens(params.size());
     alens(0) = 0.0;
-    for (int i = 1; i < params.size(); ++i) {
+    for (Eigen::DenseIndex i = 1; i < params.size(); ++i) {
         alens(i) = (path_pts.row(i) - path_pts.row(i - 1)).norm();
     }
     float acc = 0.0;
-    for (int i = 0; i < params.size(); ++i) {
+    for (Eigen::DenseIndex i = 0; i < params.size(); ++i) {
         acc += alens(i);
         alens(i) = acc;
     }
     return alens;
 }
 
-template <size_t ndim>
-Eigen::VectorXf
-Path<ndim>::arc_length_params_lin_approx(size_t num_params) const {
+Eigen::VectorXf Path3::arc_length_params_lin_approx(size_t num_params) const {
     // Interpolate the parameters that yield points that are equally spaced with
     // respect to arc length.
     // This is the discrete counterpart of reparametrization with respect to arc
@@ -318,7 +304,7 @@ Path<ndim>::arc_length_params_lin_approx(size_t num_params) const {
     Eigen::VectorXf alen_params(num_params);
     Eigen::VectorXf params =
         Eigen::VectorXf::LinSpaced(num_params, 0.0f, num_pieces());
-    Eigen::VectorXf alens = arc_length_lin_approx(params);
+    Eigen::VectorXf alens = arc_length_lin_approx(num_params);
     Eigen::VectorXf target_alens =
         Eigen::VectorXf::LinSpaced(num_params, 0.0f, total_length(num_params));
     std::vector<Eigen::DenseIndex> pieces =
@@ -342,85 +328,16 @@ Path<ndim>::arc_length_params_lin_approx(size_t num_params) const {
     return alen_params;
 }
 
-template <size_t ndim>
-float Path<ndim>::total_length(size_t num_params) const {
-    Eigen::VectorXf params =
-        Eigen::VectorXf::LinSpaced(num_params, 0, num_pieces());
-    Eigen::VectorXf alens = arc_length_lin_approx(params);
+float Path3::total_length(size_t num_params) const {
+    Eigen::VectorXf alens = arc_length_lin_approx(num_params);
     return alens(alens.size() - 1);
 }
 
-// Operator overloads for Path
-
-template <size_t ndim>
-std::ostream& operator<<(std::ostream& out, Path<ndim> const& p) {
-    out << "Path with nodes" << std::endl
+std::ostream& operator<<(std::ostream& out, Path3 const& p) {
+    out << "Path3, using nodes" << std::endl
         << p.nodes() << std::endl
-        << "and boundary conditions" << std::endl
-        << p.bdry_conds() << std::endl;
+        << "and " << p.bdry_conds();
     return out;
 }
 
-template <size_t ndim>
-Eigen::Matrix<float, 1, ndim> Path<ndim>::operator()(float param) const {
-    assert((param >= 0) && (param <= num_pieces()));
-
-    auto piece = static_cast<Eigen::DenseIndex>(floor(param));
-    float s = param - piece; // Normalized to [0, 1]
-    if (piece == num_pieces()) {
-        return nodes().row(num_pieces());
-    } // right end of the parameter range
-
-    // Compute path points as
-    //     path(s) = p[k] + s(p[k+1] - p[k]) + s(1-s)((1-s)a + sb),
-    // where p = nodes, s = param in [0, 1], and a, b as below.
-    // See https://en.wikipedia.org/wiki/Spline_interpolation
-    Eigen::Matrix<float, 1, ndim> diff =
-        nodes().row(piece + 1) - nodes().row(piece);
-    Eigen::Matrix<float, 1, ndim> a = tangents().row(piece) - diff;
-    Eigen::Matrix<float, 1, ndim> b = diff - tangents().row(piece + 1);
-    return nodes().row(piece) + s * diff +
-           s * (1.0 - s) * ((1.0 - s) * a + s * b);
-}
-
-template <size_t ndim>
-Eigen::Matrix<float, Eigen::Dynamic, ndim> Path<ndim>::
-operator()(Eigen::VectorXf const& params) const {
-    Eigen::Matrix<float, Eigen::Dynamic, ndim> points(params.size(), ndim);
-    for (int i = 0; i < params.size(); ++i) {
-        points.row(i) = this->operator()(params(i));
-    }
-    return points;
-}
-
-// -------------------------------------------------------------------------//
-
-// Playground
-
-int main() {
-    Eigen::MatrixXf v(4, 2);
-    v << 0, 0, 1, 1, -1, 2, 0, 2;
-    v.resize(5, 2);
-    v << 0, 0, 1, 1, -1, 2, 0, 2, 5, 5;
-    Path<2> p(v);
-    // std::cout << p << std::endl << "-----" << std::endl;
-    Eigen::VectorXf params = Eigen::VectorXf::LinSpaced(10, 0, 4);
-    std::cout << "total length: " << p.total_length(50) << std::endl
-              << "-----" << std::endl;
-    auto alen_params = p.arc_length_params_lin_approx(20);
-    std::cout << "arc length params:" << std::endl
-              << alen_params.transpose() << std::endl
-              << "-----" << std::endl;
-    std::cout << "arc length at new parameters:" << std::endl
-              << p.arc_length_lin_approx(alen_params).transpose() << std::endl;
-
-    glm::vec4 vec(1.0f, 0.0f, 1.2f, 4.1f);
-    std::cout << "vec:" << std::endl;
-    for (size_t i = 0; i < 4; ++i) {
-        std::cout << vec[i] << " ";
-    }
-    std::cout << std::endl;
-
-    BoundaryConditions<2> bcs(boundary_condition::natural);
-    std::cout << bcs << std::endl;
-}
+int main() { return 0; }

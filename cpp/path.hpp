@@ -4,103 +4,97 @@
 #include <eigen3/Eigen/Dense>
 #include <glm/glm.hpp>
 #include <iostream>
+#include <utility>
 #include <vector>
 
-// -------------------------------------------------------------------------//
-
-// Boundary conditions
-
-enum class boundary_condition : int {
+enum class bdry_cond : int {
     zero,
     natural,
     clamp,
 };
 
-template <size_t ndim>
-class BoundaryConditions {
+std::ostream& operator<<(std::ostream& out, bdry_cond bc);
+
+class BdryConds3 {
   public:
-    BoundaryConditions(boundary_condition bc = boundary_condition::natural)
-        : BoundaryConditions<ndim>(bc, bc) {}
-    BoundaryConditions(boundary_condition bc_left, boundary_condition bc_right);
-    BoundaryConditions(
-        std::vector<std::pair<boundary_condition, boundary_condition>> const&
-            bcs)
+    BdryConds3(bdry_cond bc = bdry_cond::natural) : BdryConds3(bc, bc) {}
+    BdryConds3(bdry_cond bc_left, bdry_cond bc_right) {
+        for (size_t dim = 0; dim < 3; dim++) {
+            bdry_conds_.push_back(
+                std::pair<bdry_cond, bdry_cond>(bc_left, bc_right));
+        }
+    }
+    BdryConds3(std::vector<std::pair<bdry_cond, bdry_cond>> const& bcs)
         : bdry_conds_(bcs) {}
 
-    std::vector<std::pair<boundary_condition, boundary_condition>>
-    bdry_conds() const {
+    std::vector<std::pair<bdry_cond, bdry_cond>> bdry_conds() const {
         return bdry_conds_;
     }
 
-    std::pair<boundary_condition, boundary_condition>
-    operator[](size_t index) const;
+    std::pair<bdry_cond, bdry_cond> operator[](size_t index) const {
+        return bdry_conds_[index];
+    }
 
   private:
-    std::vector<std::pair<boundary_condition, boundary_condition>> bdry_conds_;
-};
+    std::vector<std::pair<bdry_cond, bdry_cond>> bdry_conds_;
+}; // class BdryConds3
 
-template <size_t ndim>
-std::ostream& operator<<(std::ostream& out,
-                         BoundaryConditions<ndim> const& bcs);
+std::ostream& operator<<(std::ostream& out, BdryConds3 const& bcs);
 
-// -------------------------------------------------------------------------//
-
-// Path
-
-template <size_t ndim>
-class Path {
+class Path3 {
   public:
-    Path(Eigen::Matrix<float, Eigen::Dynamic, ndim> const& nodes,
-         boundary_condition bc = boundary_condition::natural);
-    Path(Eigen::Matrix<float, Eigen::Dynamic, ndim> const& nodes,
-         BoundaryConditions<ndim> const& bcs);
-    Path(Eigen::Matrix<float, Eigen::Dynamic, ndim> const& nodes,
-         Eigen::Matrix<float, 1, ndim> tang_left,
-         Eigen::Matrix<float, 1, ndim> tang_right,
-         boundary_condition bdry_cond = boundary_condition::clamp);
-    Path(Eigen::Matrix<float, Eigen::Dynamic, ndim> const& nodes,
-         Eigen::Matrix<float, 1, ndim> tang_left,
-         Eigen::Matrix<float, 1, ndim> tang_right,
-         BoundaryConditions<ndim> const& bcs);
+    // TODO: use std::vector<Eigen::RowVector3f>?
+    Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
+          bdry_cond bc = bdry_cond::natural);
+    Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
+          BdryConds3 const& bcs);
+    Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
+          Eigen::RowVector3f tang_left, Eigen::RowVector3f tang_right,
+          bdry_cond bc = bdry_cond::clamp);
+    Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
+          Eigen::RowVector3f tang_left, Eigen::RowVector3f tang_right,
+          BdryConds3 const& bcs);
 
-    ~Path() {}
+    ~Path3() {}
 
-    const Eigen::Matrix<float, Eigen::Dynamic, ndim> nodes() const {
+    const Eigen::Matrix<float, Eigen::Dynamic, 3> nodes() const {
         return nodes_;
     }
     Eigen::DenseIndex num_nodes() const { return nodes().rows(); }
     Eigen::DenseIndex num_pieces() const { return num_nodes() - 1; }
-    const Eigen::Matrix<float, Eigen::Dynamic, ndim> tangents() const {
+    const Eigen::Matrix<float, Eigen::Dynamic, 3> tangents() const {
         return tangents_;
     }
-    const BoundaryConditions<ndim> bdry_conds() const { return bdry_conds_; }
+    const BdryConds3 bdry_conds() const { return bdry_conds_; }
 
-    Eigen::Matrix<float, 1, ndim> operator()(float param) const;
-    Eigen::Matrix<float, Eigen::Dynamic, ndim>
+    Eigen::RowVector3f operator()(float param) const;
+    Eigen::Matrix<float, Eigen::Dynamic, 3>
     operator()(Eigen::VectorXf const& params) const;
 
-    Eigen::MatrixXf system_matrix(boundary_condition bc_left,
-                                  boundary_condition bc_right) const;
-    Eigen::VectorXf system_rhs(boundary_condition bc_left,
-                               boundary_condition bc_right, size_t dim) const;
-    Eigen::VectorXf arc_length_lin_approx(Eigen::VectorXf const& params) const;
+    Eigen::MatrixXf system_matrix(bdry_cond bc_left, bdry_cond bc_right) const;
+    Eigen::VectorXf system_rhs(bdry_cond bc_left, bdry_cond bc_right,
+                               int dim) const;
+
+    Eigen::VectorXf arc_length_lin_approx(size_t num_params) const;
     Eigen::VectorXf arc_length_params_lin_approx(size_t num_params) const;
     float total_length(size_t num_params) const;
 
   private:
-    const Eigen::Matrix<float, Eigen::Dynamic, ndim> nodes_;
-    const BoundaryConditions<ndim> bdry_conds_;
-    Eigen::Matrix<float, Eigen::Dynamic, ndim> tangents_;
+    const Eigen::Matrix<float, Eigen::Dynamic, 3> nodes_;
+    const BdryConds3 bdry_conds_;
+    Eigen::Matrix<float, Eigen::Dynamic, 3> tangents_;
     std::vector<Eigen::PartialPivLU<Eigen::MatrixXf>> sys_matrix_decomps_;
     std::vector<Eigen::VectorXf> sys_rhs_;
+    Eigen::Matrix<float, Eigen::Dynamic, 3> a_vecs_;
+    Eigen::Matrix<float, Eigen::Dynamic, 3> b_vecs_;
 
     void compute_matrices_();
     void init_tangents_();
-    void init_tangents_(Eigen::Matrix<float, 1, ndim> const& tang_left,
-                        Eigen::Matrix<float, 1, ndim> const& tang_right);
+    void init_tangents_(Eigen::RowVector3f const& tang_left,
+                        Eigen::RowVector3f const& tang_right);
     void init_rhs_();
     void compute_tangents_();
-}; // class Path
+    void init_a_and_b_vecs_();
+}; // class Path3
 
-template <size_t ndim>
-std::ostream& operator<<(std::ostream& out, Path<ndim> const& p);
+std::ostream& operator<<(std::ostream& out, Path3 const& p);
