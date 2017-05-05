@@ -43,7 +43,7 @@ std::ostream& operator<<(std::ostream& out, BdryConds3 const& bcs);
 
 class Path3 {
   public:
-    // TODO: use std::vector<Eigen::RowVector3f>?
+    // Constructors
     Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
           bdry_cond bc = bdry_cond::natural);
     Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
@@ -57,6 +57,7 @@ class Path3 {
 
     ~Path3() {}
 
+    // Accessors
     const Eigen::Matrix<float, Eigen::Dynamic, 3> nodes() const {
         return nodes_;
     }
@@ -67,17 +68,28 @@ class Path3 {
     }
     const BdryConds3 bdry_conds() const { return bdry_conds_; }
 
+    // Operator overloads
     Eigen::RowVector3f operator()(float param) const;
     Eigen::Matrix<float, Eigen::Dynamic, 3>
     operator()(Eigen::VectorXf const& params) const;
 
+    // Utilities for constructing the system of equations for the tangents
     Eigen::MatrixXf system_matrix(bdry_cond bc_left, bdry_cond bc_right) const;
     Eigen::VectorXf system_rhs(bdry_cond bc_left, bdry_cond bc_right,
                                int dim) const;
 
+    // Arc length stuff
     Eigen::VectorXf arc_length_lin_approx(size_t num_params) const;
     Eigen::VectorXf arc_length_params_lin_approx(size_t num_params) const;
     float total_length(size_t num_params) const;
+
+    // Derivatives and derived vectors
+    Eigen::RowVector3f deriv1(float param) const;
+    Eigen::RowVector3f deriv2(float param) const;
+    Eigen::RowVector3f deriv3(float param) const;
+    Eigen::RowVector3f unit_tangent(float param) const;
+    Eigen::RowVector3f unit_normal(float param) const;
+    Eigen::RowVector3f unit_binormal(float param) const;
 
   private:
     const Eigen::Matrix<float, Eigen::Dynamic, 3> nodes_;
@@ -88,6 +100,7 @@ class Path3 {
     Eigen::Matrix<float, Eigen::Dynamic, 3> a_vecs_;
     Eigen::Matrix<float, Eigen::Dynamic, 3> b_vecs_;
 
+    // Internal helpers
     void compute_matrices_();
     void init_tangents_();
     void init_tangents_(Eigen::RowVector3f const& tang_left,

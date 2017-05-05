@@ -103,6 +103,8 @@ Path3::Path3(Eigen::Matrix<float, Eigen::Dynamic, 3> const& nodes,
     init_a_and_b_vecs_();
 }
 
+// Operator overloads
+
 Eigen::RowVector3f Path3::operator()(float param) const {
     assert((param >= 0) && (param <= num_pieces()));
 
@@ -113,14 +115,13 @@ Eigen::RowVector3f Path3::operator()(float param) const {
     } // right end of the parameter range
 
     // Compute path points as
-    //     path(s) = p[k] + s(p[k+1] - p[k]) + s(1-s)((1-s)a + sb),
+    //     path(s) = p[k] + s(p[k+1] - p[k]) + s(1-s)((1-s) a[k] + s b[k]),
     // where p = nodes, s = param in [0, 1], and a, b as below.
     // See https://en.wikipedia.org/wiki/Spline_interpolation
-    Eigen::RowVector3f diff = nodes().row(piece + 1) - nodes().row(piece);
-    Eigen::RowVector3f a = tangents().row(piece) - diff;
-    Eigen::RowVector3f b = diff - tangents().row(piece + 1);
-    return nodes().row(piece) + s * diff +
-           s * (1.0 - s) * ((1.0 - s) * a + s * b);
+    return nodes().row(piece) +
+           s * (nodes().row(piece + 1) - nodes().row(piece)) +
+           s * (1.0 - s) *
+               ((1.0 - s) * a_vecs_.row(piece) + s * b_vecs_.row(piece));
 }
 
 Eigen::Matrix<float, Eigen::Dynamic, 3> Path3::
@@ -131,6 +132,15 @@ operator()(Eigen::VectorXf const& params) const {
     }
     return points;
 }
+
+std::ostream& operator<<(std::ostream& out, Path3 const& p) {
+    out << "Path3, using nodes" << std::endl
+        << p.nodes() << std::endl
+        << "and " << p.bdry_conds();
+    return out;
+}
+
+// Utilities for constructing the system of equations for the tangents
 
 Eigen::MatrixXf Path3::system_matrix(bdry_cond bc_left,
                                      bdry_cond bc_right) const {
@@ -224,6 +234,8 @@ Eigen::VectorXf Path3::system_rhs(bdry_cond bc_left, bdry_cond bc_right,
     return sys_rhs;
 }
 
+// Internal helpers
+
 void Path3::compute_matrices_() {
     for (int dim = 0; dim < 3; ++dim) {
         Eigen::MatrixXf sys_mat =
@@ -270,6 +282,8 @@ void Path3::init_a_and_b_vecs_() {
             (nodes_.row(i + 1) - nodes_.row(i)) - tangents_.row(i + 1);
     }
 }
+
+// Arc length stuff
 
 Eigen::VectorXf Path3::arc_length_lin_approx(size_t num_params) const {
     // Compute an approximation to the arc lengths at `num_params` equidistant
@@ -333,11 +347,93 @@ float Path3::total_length(size_t num_params) const {
     return alens(alens.size() - 1);
 }
 
-std::ostream& operator<<(std::ostream& out, Path3 const& p) {
-    out << "Path3, using nodes" << std::endl
-        << p.nodes() << std::endl
-        << "and " << p.bdry_conds();
-    return out;
+// Derivatives and derived vectors
+
+Eigen::RowVector3f Path3::deriv1(float param) const {
+    assert(0 <= param && param <= num_pieces());
+    auto piece = static_cast<Eigen::DenseIndex>(floor(param));
+    if (piece == num_pieces()) {
+        return tangents().row(num_pieces());
+    } // right end of the parameter range
+    auto s = param - piece;
+    // Formula for the first derivative is
+    // path'(s) = p[k+1] - p[k] + (1-s)(1-3s) a[k] + s(2-3s) b[k]
+    return nodes().row(piece + 1) - nodes().row(piece) +
+           (1.0f - s) * (1.0f - 3.0f * s) * a_vecs_.row(piece) +
+           s * (2.0f - 3.0f * s) * b_vecs_.row(piece);
 }
 
-int main() { return 0; }
+Eigen::RowVector3f Path3::deriv2(float param) const {
+    assert(0 <= param && param <= num_pieces());
+    auto piece = static_cast<Eigen::DenseIndex>(floor(param));
+    if (piece == num_pieces()) {
+        return 2.0f * a_vecs_.row(num_pieces() - 1) -
+               4.0f * b_vecs_.row(num_pieces() - 1);
+    } // right end of the parameter range
+    auto s = param - piece;
+    // Formula for the second derivative is
+    // path''(s) = (-4+6s) a[k] + (2-6s) b[k]
+    return (-4.0f + 6.0f * s) * a_vecs_.row(piece) +
+           (2.0f - 6.0f * s) * b_vecs_.row(piece);
+}
+
+Eigen::RowVector3f Path3::deriv3(float param) const {
+    assert(0 <= param && param <= num_pieces());
+    auto piece = static_cast<Eigen::DenseIndex>(floor(param));
+    if (piece == num_pieces()) {
+        piece = num_pieces() - 1;
+    } // right end of the parameter range
+    // Formula for the second derivative is
+    // path''(s) = 6 (a[k] - b[k])
+    return 6.0f * (a_vecs_.row(piece) - b_vecs_.row(piece));
+}
+
+Eigen::RowVector3f Path3::unit_tangent(float param) const {
+    auto d1 = deriv1(param);
+    auto d1_norm = d1.norm();
+    if (d1_norm < 1e-6) {
+        return Eigen::RowVector3f::Zero();
+    }
+    return d1 / d1_norm;
+}
+
+Eigen::RowVector3f Path3::unit_normal(float param) const {
+    auto unit_tan = unit_tangent(param);
+    auto d2 = deriv2(param);
+    auto normal = d2 - d2.dot(unit_tan) * unit_tan;
+    auto normal_norm = normal.norm();
+    if (normal_norm < 1e-6) {
+        return Eigen::RowVector3f::Zero();
+    }
+    return normal / normal_norm;
+}
+
+Eigen::RowVector3f Path3::unit_binormal(float param) const {
+    return unit_tangent(param).cross(unit_normal(param));
+}
+
+int main() {
+    Eigen::Matrix<float, Eigen::Dynamic, 3> nodes;
+    nodes.resize(5, 3);
+    nodes << 0, 0, 0,
+             1, 1, 1,
+             -2, -1, 0,
+             -1, 0, 0,
+             0, 0, 0;
+    Path3 path(nodes);
+    std::cout << path << std::endl;
+    std::cout << path.tangents() << std::endl << std::endl;
+    std::cout << path.unit_tangent(0) << std::endl;
+    std::cout << path.unit_normal(0) << std::endl;
+    std::cout << path.unit_binormal(0) << std::endl << std::endl;
+    std::cout << path.unit_tangent(0.999) << std::endl;
+    std::cout << path.unit_normal(0.999) << std::endl;
+    std::cout << path.unit_binormal(0.999) << std::endl << std::endl;
+    std::cout << path.unit_tangent(1) << std::endl;
+    std::cout << path.unit_normal(1) << std::endl;
+    std::cout << path.unit_binormal(1) << std::endl << std::endl;
+    std::cout << path.unit_tangent(1.001) << std::endl;
+    std::cout << path.unit_normal(1.001) << std::endl;
+    std::cout << path.unit_binormal(1.001) << std::endl << std::endl;
+    return 0;
+}
