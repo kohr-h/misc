@@ -44,8 +44,6 @@ Now, for instance, we can download the [MNIST](http://yann.lecun.com/exdb/mnist/
     fuel-download mnist
     fuel-convert mnist
 
-Presumably it shouldn't be necessary to switch to the data path, but no time to check. More info [here](https://fuel.readthedocs.io/en/latest/built_in_datasets.html).
-
 ## Exercises and Experiments
 
 **Important:** Please take notes while trying different things. Best would be to work in one or several Python scripts (not directly in the console) and adding comments as you go.
@@ -61,16 +59,30 @@ After this step, we should understand
 - the difference between symbolic and numerical computations,
 - what happens when a function is created.
 
-**Hint:** Theano has a built-in tool to visualize computation graphs. We need to
+To visualize computation graphs, Theano has the built-in tool `pydotprint` that needs the `pydot-ng` package:
 
+    conda install pyparsing
     pip install pydot-ng
 
-and then we can export graphs like this:
+Now we can export graphs like this:
 
 ```python
 from theano.printing import pydotprint
 pydotprint(theano_func, outfile='graph.png')
 ```
+
+An alternative output format using the same backend is the `d3viz` module. It produces a simpler but also less complete representation of the graph in an HTML page that can be loaded in the browser:
+
+```python
+from theano.d3viz import d3viz
+d3viz(theano_func, outfile='graph.html')
+```
+
+##### Tasks:
+
+1. Follow the first page of the tutorial, keeping in mind which quantities are symbolic and which are numeric. Investigate the types of the variables by inspecting `obj.type`.
+2. Build a function `g` that computes `sum(x**2 + 2*x*y + y**2)` for two vectors `x` and `y`, and another function `h` that computes `sum((x + y)**2)`. Plot the computation graphs of both variants. What do you observe?
+
 
 ### Blocks
 
