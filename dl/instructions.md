@@ -1,6 +1,6 @@
 # Deep Learning tasks
 
-These are instructions for the deep learning experimentation session in our seminar on 2017-05-08.
+These are instructions for the deep learning experimentation session in our seminar on 2017-05-09.
 
 ## Setting up a working environment
 
@@ -38,7 +38,7 @@ Finally, we need to tell `fuel` where to put the data. This can be done using th
 
     echo 'data_path: "/path/to/data/"' > ~/.fuelrc
 
-Now, for instance, we can download the [MNIST](http://yann.lecun.com/exdb/mnist/) dataset of 60000 + 10000 hand-written letters (numbers), each as 28x28 image:
+Now, for instance, we can download the [MNIST](http://yann.lecun.com/exdb/mnist/) dataset:
 
     cd /path/to/data
     fuel-download mnist
@@ -46,7 +46,11 @@ Now, for instance, we can download the [MNIST](http://yann.lecun.com/exdb/mnist/
 
 ## Exercises and Experiments
 
-**Important:** Please take notes while trying different things. Best would be to work in one or several Python scripts (not directly in the console) and adding comments as you go.
+**Important:** Please take notes while trying different things. Best would be to work in one *Python script* per task (not directly in the console) and adding comments as you go.
+You can also work in a Jupyter notebook, just run (in a directory higher than where you want to put the notebook file):
+
+    conda install notebook
+    jupyter-notebook
 
 ### Theano
 
@@ -81,17 +85,22 @@ d3viz(theano_func, outfile='graph.html')
 ##### Tasks:
 
 1. Follow the first page of the tutorial, keeping in mind which quantities are symbolic and which are numeric. Investigate the types of the variables by inspecting `obj.type`.
-2. Build a function `g` that computes `sum(x**2 + 2*x*y + y**2)` for two vectors `x` and `y`, and another function `h` that computes `sum((x + y)**2)`. Plot the computation graphs of both variants. What do you observe?
+2. Build a function `g` that computes `sum(x**2 + 2*x*y + y**2)` for two vectors `x` and `y`, and another function `h` that computes `sum((x + y)**2)`. Evaluate the functions with numeric values to see if it works. Plot the computation graphs of both variants. What do you observe?
+3. Check out the [guide on gradients](http://deeplearning.net/software/theano/tutorial/gradients.html) and understand how derivatives are defined. Compute the derivatives of our two functions `g` and `h` and display their computation graphs. (There's some more interesting stuff in this section, but we only need the basics for now.)
 
 
 ### Blocks
 
-We go one level higher and use layers, input and output directly as concepts instead of building everything by hand. That comes at the cost of some flexibility, but makes the learning curve much less steep. (Just compare [this MLP tutorial](http://deeplearning.net/tutorial/mlp.html#mlp) against [this one](https://blocks.readthedocs.io/en/latest/tutorial.html).)
+We now go one level higher and use layers, input and output directly as concepts instead of building everything by hand. That comes at the cost of some flexibility, but makes the learning curve much less steep. (Just compare [this MLP tutorial](http://deeplearning.net/tutorial/mlp.html#mlp) against [this one](https://blocks.readthedocs.io/en/latest/tutorial.html).)
 We'll start with a simple and relatively small dataset.
 
 #### MNIST dataset
 
-1. Understand the structure of the program piece by piece. Map it to the mathematical description. Annotate the code (can also be questions).
+[This dataset](http://yann.lecun.com/exdb/mnist/) consists in 60000 (training) + 10000 (test) hand-written single-digit numbers, each represented as 28x28 image. It is already quite old and small enough to do training and testing rather quickly.
+
+##### Tasks:
+
+1. Understand the structure of the program in the tutorial piece by piece. Map it to the mathematical description. Annotate the code (can also be questions).
    Typical things to play around with:
    - What are the types of the variables in the program? What are their values?
    - Which input do the functions and class constructors expect? What are additional options?
@@ -99,7 +108,13 @@ We'll start with a simple and relatively small dataset.
 
    **Hint:** read the documentation of the `MLP` class.
 
-   Convince yourself that `mlp` really does the same as the manually defined model (this is a bit harder).
+   Convince yourself that `mlp` really does the same as the manually defined model (this may require a bit of digging).
 
 3. Add another layer to the model. What parts of the code need to change?
 4. Change the cost function to use L1 regularization in the weight coefficients.
+
+#### Taking it further
+
+Next we want to look into [Building with Bricks](https://blocks.readthedocs.io/en/latest/create_your_own_brick.html), which more or less explains the general concept of bricks, and [Create your own Brick](https://blocks.readthedocs.io/en/latest/create_your_own_brick.html), which introduces the API of the `Brick` class.
+
+Think about relevant use cases, for instance how to rebuild the Neural Network FBP method with these concepts, or how to define a method for misalignment correction in tomography.
