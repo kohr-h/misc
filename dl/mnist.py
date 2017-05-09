@@ -13,6 +13,7 @@ from blocks.algorithms import GradientDescent, Scale
 from blocks.extensions.monitoring import DataStreamMonitoring
 from blocks.main_loop import MainLoop
 from blocks.extensions import FinishAfter, Printing
+from blocks.bricks.cost import MisclassificationRate
 
 # Input variable
 x = tensor.matrix('features')
@@ -29,8 +30,8 @@ y_hat = Softmax().apply(hidden_to_output.apply(h))
 y = tensor.lmatrix('targets')
 
 # Build MLP directly (replaces y_hat). Don't forget initialization!
-mlp_model = MLP(activations=[Rectifier(), Rectifier(), Softmax()],
-                dims=[784, 300, 100, 10],
+mlp_model = MLP(activations=[Rectifier(), Softmax()],
+                dims=[784, 100, 10],
                 weights_init=IsotropicGaussian(0.01), biases_init=Constant(0))
 mlp_model.initialize()
 mlp = mlp_model.apply(x)
@@ -39,15 +40,17 @@ mlp = mlp_model.apply(x)
 cost = CategoricalCrossEntropy().apply(y.flatten(), mlp)
 # Build the computation graph. This is probably needed to get out the
 # weights for the later definition of the final cost function.
-cg = ComputationGraph(cost)
+# Also add the misclassification rate for later monitoring. It needs to
+# be added here so it actually gets computed.
+misclass = MisclassificationRate().apply(y.flatten(), mlp)
+cg = ComputationGraph([cost, misclass])
 # `VariableFilter` is a class that filters `cg.variables` (a list)
-W1, W2, W3 = VariableFilter(roles=[WEIGHT])(cg.variables)
+W1, W2 = VariableFilter(roles=[WEIGHT])(cg.variables)
 # The final cost, an L2-regularized cross entropy loss. As usual, the
 # regularization parameter is a magical constant.
 cost = (cost +
         0.005 * (W1 ** 2).sum() +
-        0.005 * (W2 ** 2).sum() +
-        0.005 * (W3 ** 2).sum())
+        0.005 * (W2 ** 2).sum())
 cost.name = 'cost_with_regularization'
 
 # Initialize the weights and biases
@@ -84,7 +87,7 @@ data_stream_test = Flatten(DataStream.default_stream(
 # Define an object that serves to monitor the cost function applied to the
 # test data.
 monitor = DataStreamMonitoring(
-    variables=[cost], data_stream=data_stream_test, prefix="test")
+    variables=[cost, misclass], data_stream=data_stream_test, prefix="test")
 
 # The main loop connects all loose ends. The data stream is connected
 # to the algorithm and (what happens to the extensions?)
