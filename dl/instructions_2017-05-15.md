@@ -1,6 +1,4 @@
-# Deep Learning tasks
-
-These are instructions for the deep learning experimentation session in our seminar on 2017-05-15.
+# Deep Learning seminar 2017-05-15
 
 **Important:** Please take notes while trying different things. Best would be to work in one *Python script* per task (not directly in the console) and adding comments as you go.
 You can also work in a Jupyter notebook, just run (in a directory higher than where you want to put the notebook file):

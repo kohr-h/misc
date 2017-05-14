@@ -1,4 +1,4 @@
-# Deep Learning tasks
+# Deep Learning seminar 2017-05-09
 
 These are instructions for the deep learning experimentation session in our seminar on 2017-05-09.
 
