@@ -42,6 +42,14 @@ As a more long-term effort, we want to use deep learning to answer research ques
 - Compute kernel as multiplier in Fourier space, using dilation and translation properties of the FT
 - Check how to do FFT within Theano (find API)
 
+#### Auto-align misaligned projections
+
+- Find a transformation of the projections that makes them aligned (whatever that means)
+- Operate in Fourier space?
+- Disturbances to be modeled: phantom translation & rotation, projection translations & rotations, varying angles, specimen warp (like in ET)
+- Alternative approach: determine sensitivity of the data wrt the disturbance parameters
+- Training data: simulated
+
 #### Segmentation
 
 - Build a network for segmentation
