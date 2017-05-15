@@ -12,12 +12,6 @@ class TheanoOp(theano.Op):
     # Properties attribute
     __props__ = ()
 
-    # itypes and otypes attributes are
-    # compulsory if make_node method is not defined.
-    # They're the type of input and output respectively
-    itypes = None
-    otypes = None
-
     # Compulsory if itypes and otypes are not defined. This is probably
     # more flexible.
     def make_node(self, x):
@@ -44,16 +38,19 @@ class TheanoOp(theano.Op):
     # optional:
     check_input = True
 
-    def grad(self, inputs, output_gradients):
+    def grad(self, inputs, output_grads):
         print('--- in grad:')
         print('inputs:', repr(inputs))
-        print('output_gradients:', repr(output_gradients))
+        print('output_gradients:', repr(output_grads))
         x = inputs[0]
-        ograd = output_gradients[0]
+        ograd = output_grads[0]
         print('x:', type(x), repr(x), x.type())
         print('ograd:', type(ograd), repr(ograd), ograd.type())
 
         op = self
+
+        # TODO: probably we need another level of indirection to make the
+        # returned variable only depend on x
 
         class TheanoGradOp(TheanoOp):
             def __init__(self):
@@ -78,18 +75,21 @@ class TheanoOp(theano.Op):
                 print('x:', type(x), repr(x), ograd.type())
                 print('ograd:', type(ograd), repr(ograd), ograd.type())
                 print('out:', type(out), repr(out))
-                out[0] = np.asarray(op.odl_op.derivative(x)(ograd))
+                out[0] = np.asarray(op.odl_op.derivative(x).adjoint(ograd))
 
             def grad(self, inputs, output_gradients):
                 pass
 
+            def infer_shape(self, node, input_shapes):
+                return [op.odl_op.domain.shape]
+
         grad_op = TheanoGradOp()
+        print('--- back in grad:')
         print('grad_op:', repr(grad_op))
         grad_op_apply = grad_op(x, ograd)
-        print('grad_op_apply:', repr(grad_op_apply))
-        return TheanoGradOp()(x, ograd)
-        func = theano.function([x, ograd], TheanoGradOp())
-        return func
+        print('--- back in grad:')
+        print('grad_op_apply:', repr(grad_op_apply), grad_op_apply.type())
+        return [grad_op_apply]
 
     def R_op(self, inputs, eval_points):
         pass
@@ -103,15 +103,18 @@ class TheanoOp(theano.Op):
 
 # %% Testing
 
-space = odl.rn(5)
-ident = odl.ScalingOperator(space, 2)
-theano_ident = TheanoOp(ident)
+space = odl.rn(3)
+op = odl.MatrixOperator([[1, 0, 1],
+                         [0, 1, 1]], domain=space)
+theano_ident = TheanoOp(op)
 
 x = theano.tensor.dvector('x')
 z = theano_ident(x)
 res = z.sum()
 f = theano.function([x], [res])
-print(theano.pp(z))
+theano.printing.debugprint(f)
 print(f(space.one()))
-g = theano.grad(res, x)
-print(g)
+gr = theano.grad(res, x)
+g = theano.function([x], [gr])
+theano.printing.debugprint(g)
+print(g(space.one()))
