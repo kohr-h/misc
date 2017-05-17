@@ -30,8 +30,8 @@ class OdlOperatorAsTheanoOp(theano.Op):
             The ODL operator to be wrapped. For gradient computations to
             work, ``odl_op.derivative`` must be implemented.
 
-        Example
-        -------
+        Examples
+        --------
         >>> space = odl.rn(3)
         >>> matrix = np.array([[1, 0, 1],
         ...                    [0, 1, 1]], dtype=float)
