@@ -1,4 +1,5 @@
 import numpy as np
+import odl
 import theano
 
 
@@ -32,13 +33,25 @@ class OdlOperatorAsTheanoOp(theano.Op):
 
         Examples
         --------
+        Make a vector-to-vector operator:
+
         >>> space = odl.rn(3)
         >>> matrix = np.array([[1, 0, 1],
         ...                    [0, 1, 1]], dtype=float)
         >>> op = odl.MatrixOperator(matrix, domain=space)
-        >>> theano_op = OdlOperatorAsTheanoOp(op)
-        >>> theano_op.odl_op is op
+        >>> matrix_op = OdlOperatorAsTheanoOp(op)
+        >>> matrix_op.odl_op is op
         True
+
+        Create a functional, i.e., an operator with scalar output:
+
+        >>> space = odl.rn(3)
+        >>> functional = odl.solvers.L2NormSquared(space)
+        >>> func_op = OdlOperatorAsTheanoOp(functional)
+        >>> x = theano.tensor.dvector()
+        >>> apply = func_op.make_node(x)
+        >>> apply.outputs[0].type()
+        <TensorType(float64, scalar)>
         """
         self.__odl_op = odl_op
 
@@ -64,8 +77,18 @@ class OdlOperatorAsTheanoOp(theano.Op):
         x = theano.tensor.as_tensor_variable(x)
         # TODO: we need to check that the dimension of the tensor variable
         # is correct. Alternatively we can reshape.
-        # TODO: map to scalar output in case we receive a Functional
-        return theano.Apply(self, [x], [x.type()])
+        if isinstance(self.odl_op, odl.solvers.Functional):
+            # Make scalar out type
+            # TODO: there must be a better way
+            out_type = theano.tensor.TensorVariable(
+                theano.tensor.TensorType(self.odl_op.domain.dtype, ()))
+        else:
+            out_type = theano.tensor.TensorVariable(
+                theano.tensor.TensorType(
+                    self.odl_op.range.dtype,
+                    (False,) * len(self.odl_op.range.shape)))
+
+        return theano.Apply(self, [x], [out_type.type()])
 
     def perform(self, node, inputs_storage, output_storage):
         """Evaluate this node's computation.
@@ -84,16 +107,29 @@ class OdlOperatorAsTheanoOp(theano.Op):
 
         Examples
         --------
+        Perform a matrix multiplication:
+
         >>> space = odl.rn(3)
         >>> matrix = np.array([[1, 0, 1],
         ...                    [0, 1, 1]], dtype=float)
         >>> op = odl.MatrixOperator(matrix, domain=space)
-        >>> theano_op = OdlOperatorAsTheanoOp(op)
+        >>> matrix_op = OdlOperatorAsTheanoOp(op)
         >>> x = theano.tensor.dvector('x')
-        >>> op_x = theano_op(x)
+        >>> op_x = matrix_op(x)
         >>> op_func = theano.function([x], [op_x])
         >>> op_func([1, 2, 3])
         [array([ 4.,  5.])]
+
+        Evaluate a unctional, i.e., an operator with scalar output:
+
+        >>> space = odl.rn(3)
+        >>> functional = odl.solvers.L2NormSquared(space)
+        >>> func_op = OdlOperatorAsTheanoOp(functional)
+        >>> x = theano.tensor.dvector()
+        >>> op_x = func_op(x)
+        >>> op_func = theano.function([x], [op_x])
+        >>> op_func([1, 2, 3])
+        [array(14.0)]
         """
         x = inputs_storage[0]
         out = output_storage[0]
@@ -115,13 +151,17 @@ class OdlOperatorAsTheanoOp(theano.Op):
 
         Examples
         --------
+        Compute the Jacobian adjoint of the matrix operator, which is the
+        operator of the transposed matrix. We compose with the ``sum``
+        functional to be able to evaluate ``grad``:
+
         >>> space = odl.rn(3)
         >>> matrix = np.array([[1, 0, 1],
         ...                    [0, 1, 1]], dtype=float)
         >>> op = odl.MatrixOperator(matrix, domain=space)
-        >>> theano_op = OdlOperatorAsTheanoOp(op)
+        >>> matrix_op = OdlOperatorAsTheanoOp(op)
         >>> x = theano.tensor.dvector('x')
-        >>> op_x = theano_op(x)
+        >>> op_x = matrix_op(x)
         >>> cost = op_x.sum()
         >>> cost_grad = theano.grad(cost, x)
         >>> cost_grad_func = theano.function([x], [cost_grad])
@@ -131,9 +171,21 @@ class OdlOperatorAsTheanoOp(theano.Op):
         >>> np.allclose(cost_grad_func([1, 2, 3]), matrix.T.dot(sum_grad))
         True
 
+        Compute the gradient of a custom functional:
+
+        >>> space = odl.rn(3)
+        >>> functional = odl.solvers.L2NormSquared(space)
+        >>> func_op = OdlOperatorAsTheanoOp(functional)
+        >>> x = theano.tensor.dvector()
+        >>> op_x = func_op(x)
+        >>> grad_x = theano.grad(op_x, x)
+        >>> grad_func = theano.function([x], [grad_x])
+        >>> grad_func([1, 2, 3])  # should be 2 * input
+        [array([ 2.,  4.,  6.])]
+
         Notes
         -----
-        This method apply the contribution of this node, i.e., the Jacobian
+        This method applies the contribution of this node, i.e., the Jacobian
         of its outputs with respect to its inputs, to the gradients of some
         cost function with respect to the outputs of this node.
 
@@ -141,7 +193,7 @@ class OdlOperatorAsTheanoOp(theano.Op):
         its output is connected to a cost function that computes
         :math:`y --> C(y)`. Here, :math:`x`, :math:`y` and :math:`f(x)` are
         tensor variables and :math:`C(y)` is a scalar variable.
-        In ODL language, what ``grad`` should compute
+        In ODL language, what ``grad`` should compute is
 
             .. math::
                 \\nabla(C \circ f)(x) = f'(x)^*\\big(\\nabla C (f(x))\\big)
@@ -205,7 +257,7 @@ class OdlOperatorAsTheanoOp(theano.Op):
                 """Create a node for the computation graph."""
                 x = theano.tensor.as_tensor_variable(x)
                 v = theano.tensor.as_tensor_variable(v)
-                return theano.Apply(self, [x, v], [v.type()])
+                return theano.Apply(self, [x, v], [x.type()])
 
             def perform(self, node, inputs_storage, output_storage):
                 """Evaluate this node's computation.
@@ -245,7 +297,10 @@ class OdlOperatorAsTheanoOp(theano.Op):
         output_shapes : 1-element list of tuples
             Fixed shape of the output determined by `odl_op`.
         """
-        return [self.odl_op.range.shape]
+        if isinstance(self.odl_op, odl.solvers.Functional):
+            return [()]
+        else:
+            return [self.odl_op.range.shape]
 
 if __name__ == '__main__':
     from odl.util.testutils import run_doctests
