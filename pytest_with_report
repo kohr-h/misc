@@ -1,0 +1,5 @@
+#!/bin/sh
+
+cd /export/scratch1/kohr/git/odl
+pytest --junit-xml=../../odl_junit_reports/$(git rev-parse --abbrev-ref HEAD)/report__$(git rev-parse HEAD)__$(date -Iminutes).xml
+cd -
