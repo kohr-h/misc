@@ -46,12 +46,14 @@ for p, dirs, files in os.walk(path):
             dates.append(date)
 
 # Find run times for the specified test name
+filename, testname = test_name.split(': ', maxsplit=1)
 times = []
 for report in reports:
     tree = ElementTree.parse(report)
     root = tree.getroot()
     for testcase in root.iter('testcase'):
-        if testcase.attrib['name'] == test_name:
+        if (testcase.attrib['file'] == filename and
+                testcase.attrib['name'] == testname):
             times.append(testcase.attrib['time'])
             break
 
