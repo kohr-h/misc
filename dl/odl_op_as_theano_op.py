@@ -1,6 +1,7 @@
 import numpy as np
 import odl
 import theano
+import blocks
 
 
 class OdlOperatorAsTheanoOp(theano.Op):
@@ -301,6 +302,12 @@ class OdlOperatorAsTheanoOp(theano.Op):
             return [()]
         else:
             return [self.odl_op.range.shape]
+
+
+class OdlOperatorAsBrick(blocks.bricks.Feedforward):
+    """Wrap an ODL operator as a brick."""
+    # TODO: write code
+
 
 if __name__ == '__main__':
     from odl.util.testutils import run_doctests
