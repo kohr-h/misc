@@ -714,7 +714,7 @@ def ufunc11(name, a, out=None, context=None):
         Array in which to store the result.
     context : `pygpu.gpuarray.GpuContext`, optional
         Use this GPU context to evaluate the GPU kernel. For ``None``,
-        and if no GPU array is among the provided parameters, a default
+        if no GPU array is among the provided parameters, a default
         GPU context must have been set.
 
     Returns
@@ -867,7 +867,7 @@ def ufunc21(name, a, b, out=None, context=None):
         Array in which to store the result.
     context : `pygpu.gpuarray.GpuContext`, optional
         Use this GPU context to evaluate the GPU kernel. For ``None``,
-        and if no GPU array is among the provided parameters, a default
+        if no GPU array is among the provided parameters, a default
         GPU context must have been set.
 
     Returns
@@ -903,7 +903,7 @@ def ufunc21(name, a, b, out=None, context=None):
         cls = ndgpuarray
 
     # Cast input to `GpuArray` of the right dtype if necessary
-    # TODO: figure out what to do here exactly
+    # TODO: figure out what to do here exactly (scalars and such)
     if isinstance(a, (GpuArray, numpy.ndarray)):
         if a.flags.f_contiguous and not a.flags.c_contiguous:
             order = 'F'
