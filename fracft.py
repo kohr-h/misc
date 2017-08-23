@@ -40,10 +40,13 @@ def fractional_ft(x, alpha, axis=0, out=None, padded_len=None, impl='numpy',
     out : `numpy.ndarray`, optional
         Array to store the values in.
     padded_len : int, optional
-        Length of the padded arrays in the given axis. By default,
+        Length of the padded array in the given axis. By default,
         ``padded_len = 2 * (n - 1)`` is chosen, where
         ``n == x.shape[axis]``. This is the smallest possible choice.
         Selecting a power of 2 may speed up the computation.
+    impl : {'numpy', 'pyfftw', 'cufft'}
+        Backend for computing the FFTs. Currently only ``'numpy'`` is
+        supported.
     precomp_z : sequence of `array-like`, optional
         Arrays of precomputed factors (one per axis)
         ``z[j] = exp(1j * pi * alpha * j**2)`` as used in the
@@ -71,104 +74,148 @@ def fractional_ft(x, alpha, axis=0, out=None, padded_len=None, impl='numpy',
     """
     # --- Process input parameters --- #
 
+    # x
     x = np.asarray(x)
+    if x.ndim < 1:
+        raise ValueError('`x` must be at least 1-dimensional')
     # TODO: keep real data type and use half-complex in that case
     cplx_dtype = np.result_type(x.dtype, np.complex64)
     x = x.astype(cplx_dtype)
+    order = 'F' if x.flags.f_contiguous and not x.flags.c_contiguous else 'C'
 
-    # axes
-    if axes is None:
-        axes = list(range(x.ndim))
-    axes = [int(ax) for ax in axes]
+    # axis
+    axis, axis_in = int(axis), axis
+    axis = x.ndim + axis if axis < 0 else axis
+    if not 0 <= axis < x.ndim:
+        raise ValueError('`axis` {} out of the valid range {}, ..., {}'
+                         ''.format(axis_in, -x.ndim, x.ndim - 1))
 
     # alpha
     real_dtype = np.empty(0, dtype=cplx_dtype).real.dtype
-    alpha = [np.array(a, dtype=real_dtype, copy=False) for a in alpha]
-
-    if len(alpha) != len(axes):
-        raise ValueError('lengths of `axes` and `alpha` do not match: '
-                         '{} != {}'.format(len(alpha), len(axes)))
+    alpha = np.array(alpha, dtype=real_dtype, copy=False, order=order)
 
     # padded_len
     if padded_len is None:
-        padded_len = [2 * (x.shape[ax] - 1) for ax in axes]
+        padded_len = 2 * (x.shape[axis] - 1)
     else:
-        padded_len = [int(plen) for plen in padded_len]
+        padded_len, padded_len_in = int(padded_len), padded_len
+        if padded_len_in < 2 * (x.shape[axis] - 1):
+            raise ValueError(
+                '`padded_len` must be at least {} for axis {} with length {}, '
+                'got {}.'.format(2 * (x.shape[axis] - 1), axis, x.shape[axis],
+                                 padded_len_in))
+        if padded_len_in % 2:
+            raise ValueError('`padded_len` must be even, got {}.'
+                             ''.format(padded_len_in))
 
-    if len(padded_len) != len(axes):
-        raise ValueError('lengths of `axes` and `padded_len` do not match: '
-                         '{} != {}'.format(len(padded_len), len(axes)))
+    # impl
+    impl, impl_in = str(impl).lower(), impl
+    if impl not in ('numpy', 'pyfftw', 'cufft'):
+        raise ValueError('`impl` {!r} not understood'.format(impl_in))
 
-    for ax, plen in zip(axes, padded_len):
-        if plen < 2 * (x.shape[ax] - 1):
-            raise ValueError('`padded_len` entry for axis {} must be at least '
-                             '{}, got {}.'
-                             ''.format(ax, 2 * (x.shape[ax] - 1), plen))
-        if plen % 2:
-            raise ValueError('`padded_len` entry for axis {} must be even, '
-                             'got {}.'.format(ax, plen))
+    if impl != 'numpy':
+        raise NotImplementedError('`impl` {!r} not supported yet'.format(impl))
 
     # precomp_z
     precomp_z = kwargs.pop('precomp_z', None)
     if precomp_z is None:
-        precomp_z = []
-        for ax, a in zip(axes, alpha):
-            # Initialize the precomputed z values. These are
-            # exp(1j * pi * alpha * j**2) for 0 <= j < n
-            arr = np.exp((1j * np.pi * np.arange(x.shape[ax]) ** 2) * a)
-            precomp_z.append(arr)
+        # Initialize the precomputed z values. These are
+        # exp(1j * pi * alpha * j**2) for 0 <= j < n
+        js_sq = np.arange(x.shape[axis]) ** 2
+        bcast_slc = [None] * x.ndim
+        bcast_slc[axis] = slice(None)
+        js_sq = js_sq[bcast_slc]
+        precomp_z = np.exp((1j * np.pi * js_sq) * alpha)
 
     precomp_zhat = kwargs.pop('precomp_zhat', None)
     if precomp_zhat is None:
-        for n, a, z in zip(shape, alpha, precomp_z):
-            pass
         # Initialize the padded FT of the precomputed z values. These are
         # o exp(1j * pi * alpha * j**2) for 0 <= j < len(x)
         # o exp(1j * pi * alpha * (2*p - j)**2) for 2*p - m <= j < 2*p
         # o 0, otherwise
         # o followed by a discrete FT.
         # Here, 2*p refers to the even padded length of the arrays.
-#        precomp_zhat = np.empty(padded_len, dtype='complex')
-#        precomp_zhat[:len(x)] = precomp_z[:len(x)]
-#        precomp_zhat[-len(x) + 1:] = precomp_z[1:len(x)][::-1]
-#        # Here we get a copy, no way around since fft has no in-place method
-#        precomp_zhat = np.fft.fft(precomp_zhat)
-    else:
-        precomp_zhat = np.asarray(precomp_zhat, dtype='complex')
-        if precomp_zhat.ndim != 1:
-            raise ValueError('precomp_zhat has {} dimensions, expected 1.'
-                             ''.format(precomp_zhat.ndim))
-        if len(precomp_zhat) != padded_len:
-            raise ValueError('precomp_zhat has length {}, expected {}.'
-                             ''.format(len(precomp_zhat), padded_len))
+        js_sq = np.arange(x.shape[axis]) ** 2
+        bcast_slc = [None] * x.ndim
+        bcast_slc[axis] = slice(None)
+        js_sq = js_sq[bcast_slc]
 
-    # TODO: axis order
+        shape = np.broadcast(js_sq, x, alpha).shape
+        shape[axis] = padded_len
+        precomp_zhat = np.zeros(shape, dtype=cplx_dtype, order=order)
+
+        # Lower part in `axis` (0 <= j < len(x) above)
+        lower_slc = [slice(None)] * x.ndim
+        lower_slc[axis] = slice(None, x.shape[axis])
+        precomp_zhat[lower_slc] = np.exp((1j * np.pi * js_sq) * alpha)
+
+        # Upper part (2*p - m <= j < 2*p above), gained by mirroring the
+        # lower part from index 1 on
+        upper_slc = [slice(None)] * x.ndim
+        upper_slc[axis] = slice(-x.shape[axis] + 1, None)
+        lower_mirr_slc = [slice(None)] * x.ndim
+        # TODO: not sure if this slicing is correct (should maybe cover less?)
+        lower_mirr_slc[axis] = slice(x.shape[axis] - 1, 0, -1)
+        precomp_zhat[upper_slc] = precomp_zhat[lower_mirr_slc]
+
+        if impl == 'numpy':
+            precomp_zhat = np.fft.fft(precomp_zhat, axis=axis)
+        else:
+            assert False
+
+    else:
+        precomp_zhat = np.asarray(precomp_zhat, dtype=cplx_dtype, order=order)
+
     if out is None:
         out = np.empty_like(x)
-    else:
-        if not isinstance(out, np.ndarray):
-            raise TypeError('out is not a numpy.ndarray instance.'.format(out))
-        if out.shape != x.shape:
-            raise ValueError('out has shape {}, expected {}.'
-                             ''.format(out.shape, x.shape))
-        # TODO: adapt this once other dtypes are considered
-        if out.dtype != x.dtype:
-            raise ValueError('out has dtype {}, expected {}.'
-                             ''.format(out.dtype, x.dtype))
 
     # Now the actual computation. First the input array x needs to be padded
-    # with zeros up to padded_len (in a new array).
+    # with zeros up to padded_len (in a new array), and multiplied by the
+    # z factors.
+    shape = np.broadcast(x, alpha).shape
+    shape[axis] = padded_len
+    x_part_slc = [slice(None)] * x.ndim
+    x_part_slc[axis] = slice(None, x.shape[axis])
+    y = np.zeros(shape, dtype=cplx_dtype, order=order)
+    y[x_part_slc] = x
+    y[x_part_slc] *= precomp_z
 
-    y = np.zeros(padded_len, dtype='complex')
-    y[:len(x)] = x
-    y[:len(x)] *= precomp_z[:len(x)]
-    yhat = np.fft.fft(y)
+    # Now we convolve with the z values by performing FFT and multiplying
+    # with the zhat values, then applying inverse FFT
+    if impl == 'numpy':
+        yhat = np.fft.fft(y, axis=axis)
+    else:
+        assert False
+
     yhat *= precomp_zhat
-    y = np.fft.ifft(yhat)
-    out[:] = y[:len(x)]
-    out *= precomp_z[:len(x)].conj()
+
+    if impl == 'numpy':
+        y = np.fft.ifft(yhat, axis=axis)
+
+    if out is None:
+        out = y[x_part_slc]
+    else:
+        out[:] = y[x_part_slc]
 
     return out, precomp_z, precomp_zhat
+
+
+def fracft_1d_direct(x, alpha):
+    plen = 2 * (len(x) - 1)
+    z = np.exp(1j * np.pi * np.arange(len(x)) ** 2 * alpha)
+    zhat = np.zeros(plen, dtype=complex)
+    zhat[:len(x)] = z
+    zhat[-len(x) + 1:] = zhat[len(x) - 1: 0: -1]
+    zhat = np.fft.fft(zhat)
+
+    y = np.empty(plen, dtype=complex)
+    y[:len(x)] = x * z
+    yhat = np.fft.fft(y)
+    yhat *= zhat
+    y = np.fft.ifft(yhat)
+    y[:len(x)] *= z.conj()
+
+    return y[:len(x)]
 
 
 if __name__ == '__main__':
