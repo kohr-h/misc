@@ -47,14 +47,15 @@ def fractional_ft(x, alpha, axis=0, out=None, padded_len=None, impl='numpy',
     impl : {'numpy', 'pyfftw', 'cufft'}
         Backend for computing the FFTs. Currently only ``'numpy'`` is
         supported.
-    precomp_z : sequence of `array-like`, optional
-        Arrays of precomputed factors (one per axis)
-        ``z[j] = exp(1j * pi * alpha * j**2)`` as used in the
-        transform. Their lengths must be at least the length of ``x``
-        in the corresponding axes. Values at indices beyond the length
-        of ``x`` in the respective axis are ignored.
-    precomp_zhat : sequence of `array-like`, optional
-        Arrays of precomputed factors (one per axis), which are the Fourier
+    precomp_zbar : `array-like`, optional
+        Array of precomputed factors ``zbar[j] = exp(-1j * pi * alpha * j**2)``
+        as used in the transform (they are the complex conjugates of the
+        ``z`` factors). Its shape must be broadcastable with
+        ``x``, apart from ``axis``, where it must be at least as long
+        as ``x``. Values at indices beyond the length of ``x`` in ``axis``
+        are ignored.
+    precomp_zhat : `array-like`, optional
+        Array of precomputed factors (one per axis), which are the Fourier
         transforms of the factors ``z``.
 
     Returns
@@ -63,14 +64,14 @@ def fractional_ft(x, alpha, axis=0, out=None, padded_len=None, impl='numpy',
         The fractional FT of ``x``. The returned array has the same
         shape as ``x`` (padded values are discarded). If ``out`` was
         given, the returned object is a reference to it.
-    precomp_z : tuple of `numpy.ndarray`
-        The precomputed values of the DFT of ``z``. If ``precomp_z``
-        was given as a tuple of ndarray, the returned object is a
-        reference to it.
+    precomp_zbar : `numpy.ndarray`
+        The precomputed values of the complex conjugate of ``z``.
+        If ``precomp_zbar`` was given as Numpy array, the returned object
+        is a reference to it.
     precomp_zhat : tuple of `numpy.ndarray`
-        The precomputed values of the DFT of ``zhat``. If ``precomp_zhat``
-        was given as a tuple of ndarray, the returned object is a
-        reference to it.
+        The precomputed values of the DFT of ``z``. If ``precomp_zhat``
+        was given as a Numpy array, the returned object is a reference
+        to it.
     """
     # --- Process input parameters --- #
 
@@ -125,7 +126,7 @@ def fractional_ft(x, alpha, axis=0, out=None, padded_len=None, impl='numpy',
         bcast_slc = [None] * x.ndim
         bcast_slc[axis] = slice(None)
         js_sq = js_sq[bcast_slc]
-        precomp_z = np.exp((1j * np.pi * js_sq) * alpha)
+        precomp_zbar = np.exp((-1j * np.pi * js_sq) * alpha)
 
     precomp_zhat = kwargs.pop('precomp_zhat', None)
     if precomp_zhat is None:
@@ -140,7 +141,7 @@ def fractional_ft(x, alpha, axis=0, out=None, padded_len=None, impl='numpy',
         bcast_slc[axis] = slice(None)
         js_sq = js_sq[bcast_slc]
 
-        shape = np.broadcast(js_sq, x, alpha).shape
+        shape = list(np.broadcast(js_sq, x, alpha).shape)
         shape[axis] = padded_len
         precomp_zhat = np.zeros(shape, dtype=cplx_dtype, order=order)
 
@@ -172,13 +173,13 @@ def fractional_ft(x, alpha, axis=0, out=None, padded_len=None, impl='numpy',
     # Now the actual computation. First the input array x needs to be padded
     # with zeros up to padded_len (in a new array), and multiplied by the
     # z factors.
-    shape = np.broadcast(x, alpha).shape
+    shape = list(np.broadcast(x, alpha).shape)
     shape[axis] = padded_len
     x_part_slc = [slice(None)] * x.ndim
     x_part_slc[axis] = slice(None, x.shape[axis])
     y = np.zeros(shape, dtype=cplx_dtype, order=order)
     y[x_part_slc] = x
-    y[x_part_slc] *= precomp_z
+    y[x_part_slc] *= precomp_zbar[x_part_slc]
 
     # Now we convolve with the z values by performing FFT and multiplying
     # with the zhat values, then applying inverse FFT
@@ -197,7 +198,9 @@ def fractional_ft(x, alpha, axis=0, out=None, padded_len=None, impl='numpy',
     else:
         out[:] = y[x_part_slc]
 
-    return out, precomp_z, precomp_zhat
+    out *= precomp_zbar[x_part_slc]
+
+    return out, precomp_zbar, precomp_zhat
 
 
 def fracft_1d_direct(x, alpha):
@@ -208,8 +211,8 @@ def fracft_1d_direct(x, alpha):
     zhat[-len(x) + 1:] = zhat[len(x) - 1: 0: -1]
     zhat = np.fft.fft(zhat)
 
-    y = np.empty(plen, dtype=complex)
-    y[:len(x)] = x * z
+    y = np.zeros(plen, dtype=complex)
+    y[:len(x)] = x * z.conj()
     yhat = np.fft.fft(y)
     yhat *= zhat
     y = np.fft.ifft(yhat)
