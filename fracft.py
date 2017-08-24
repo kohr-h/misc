@@ -6,6 +6,7 @@ import numpy as np
 __all__ = ('fractional_ft',)
 
 
+# @profile  # for the line profiler
 def fractional_ft(x, alpha, axis=0, out=None, padded_len=None, impl='numpy',
                   **kwargs):
     """Compute the fractional FT of x with parameter alpha.
@@ -222,5 +223,6 @@ def fracft_1d_direct(x, alpha):
 
 
 if __name__ == '__main__':
-    from doctest import testmod, NORMALIZE_WHITESPACE
-    testmod(optionflags=NORMALIZE_WHITESPACE)
+    x = np.zeros((2048, 500))
+    alpha = 1. / 1024
+    xhat = fractional_ft(x, alpha, axis=0)
