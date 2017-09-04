@@ -213,7 +213,7 @@ def fracft_1d_direct(x, alpha):
     zhat = np.fft.fft(zhat)
 
     y = np.zeros(plen, dtype=complex)
-    y[:len(x)] = x * z.conj()
+    y[:len(x)] = x*z.conj()
     yhat = np.fft.fft(y)
     yhat *= zhat
     y = np.fft.ifft(yhat)
@@ -222,7 +222,29 @@ def fracft_1d_direct(x, alpha):
     return y[:len(x)]
 
 
+def pseudopolar_fft_2d_vert(x, x0, dx, rho0, n_rad, n_ang):
+    """Return the pseudo-polar FFT of ``x`` in the vertical cone in 2D.
+
+    Parameters
+    ----------
+    x : `array-like`, two-dimensional
+        Input array to the transform.
+    x0 : 2-sequence of float
+        Lower-left corner of the spatial grid on which ``x`` is defined.
+    dx : 2-sequence of float
+        Uniform spacing between spatial grid points.
+    rho0 : positive float
+        Start radius of the pseudo-polar grid.
+    drho : positive float
+        Radial spacing of the PP grid.
+    nrad : positive integer
+        Number of radii in the PP grid.
+    nrad : positive integer
+        Number of angles in the PP grid.
+    """
+
 if __name__ == '__main__':
-    x = np.zeros((2048, 500))
+    x = np.ones((2048, 500))
     alpha = 1. / 1024
-    xhat = fractional_ft(x, alpha, axis=0)
+    xhat, _, __ = fractional_ft(x, alpha, axis=0)
+    xbar, _, __ = fractional_ft(xhat, -alpha, axis=0)
