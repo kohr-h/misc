@@ -10,6 +10,7 @@ import torch
 
 # --- Phantom generators --- #
 
+
 def random_ellipse(interior=False):
     if interior:
         x_0 = np.random.rand() - 0.5
@@ -32,6 +33,7 @@ def random_phantom(spc, n_ellipse=50, interior=False):
 
 # --- Setup code --- #
 
+
 np.random.seed(0)
 try:
     name = os.path.splitext(os.path.basename(__file__))[0]
@@ -53,7 +55,9 @@ operator = odl.tomo.RayTransform(space, geometry)
 opnorm = odl.power_method_opnorm(operator)
 operator = (1 / opnorm) * operator
 
+
 # --- Create torch layer from ODL operator --- #
+
 
 op_layer = TorchOperator(operator)
 adj_layer = TorchOperator(operator.adjoint)
@@ -88,20 +92,66 @@ def generate_data(validation=False):
 
     return y_arr, x_true_arr
 
-# --- Create variables --- #
 
-# Constants
-sigma = torch.autograd.Variable(torch.FloatTensor(0.5))
-tau = torch.autograd.Variable(torch.FloatTensor(0.5))
-theta = torch.autograd.Variable(torch.FloatTensor(1.0))
+# --- Custom layers --- #
 
 
+class PReLU(torch.nn.Module):
 
-n_iter = 10
+    def __init__(self, shape):
+        super(PReLU, self).__init__()
+        self.alphas = torch.nn.Parameter(torch.zeros(shape))
+        self.relu = torch.nn.ReLU()
 
-class ChambollePockModule(torch.nn.Module):
-    # TODO: init module with layers & define parameters
-    pass
+    def forward(self, input):
+        pos = self.relu(input)
+        neg = -self.alphas * self.relu(-input)
+        return pos + neg
+
+
+class PdhgMethod(torch.nn.Module):
+
+    """Module for the PDHG method with a fixed number of iterations.
+
+    The PDHG method to solve the problem
+
+    .. math::
+        x^\dagger = \mathrm{arg\, min}_{x} f(Kx) + g(x)
+
+    with convex :math:`f` and :math:`g` goes as follows:
+
+    .. math::
+        & \\text{Given:} & x_0, \\bar x_0, y_0, \\tau, \sigma, \\theta, N,
+        n = 0 \\\\
+        & \\text{While } & n \\leq N: \\\\
+        && y_{n+1} \\leftarrow
+            \mathrm{prox}_{\sigma f^*}(y_n + \sigma K \\bar x_n) \\\\
+        && x_{n+1} \\leftarrow
+            \mathrm{prox}_{\\tau g}(x_n - \\tau K^*y_{n+1}) \\\\
+        && \\bar x_{n+1} \\leftarrow
+            x_{n+1} + \\theta (x_{n+1} - x_n) \\\\
+        && n \\leftarrow
+            n + 1
+    """
+
+    def __init__(self, wrapped_op, wrapped_adj, num_iter):
+        super(PdhgMethod, self).__init__()
+
+        # Set non-learnable parameters
+        self.wrapped_op = wrapped_op
+        self.wrapped_adj = wrapped_adj
+        self.num_iter = num_iter
+
+        # Set learnable parameters with initial values
+        self.sigma = torch.nn.Parameter(torch.FloatTensor(0.5))
+        self.tau = torch.nn.Parameter(torch.FloatTensor(0.5))
+        self.theta = torch.nn.Parameter(torch.FloatTensor(1.0))
+
+        # Set layers, which are as follows:
+        #
+        # 1. apply operator
+        # 2.
+        pass
 
 
 def apply_conv(x, filters=32):
@@ -115,10 +165,6 @@ primal = torch.autograd.Variable(torch.zeros(size, size))
 primal_bar = torch.autograd.Variable(torch.zeros_like(primal.data))
 dual = torch.autograd.Variable(torch.zeros(*operator.range.shape))
 
-for i in range(n_iter):
-    # layer 1: operator
-    after_op = op_layer(primal_bar)
-
 
 
 with tf.name_scope('tomography'):
@@ -131,6 +177,7 @@ with tf.name_scope('tomography'):
         with tf.variable_scope('dual_iterate',
                                reuse=True if i != 0 else None):
             evalop = odl_op_layer(primal_bar)
+            # What is this??
             update = tf.concat([dual + sigma * evalop, y_rt], axis=-1)
 
             update = prelu(apply_conv(update), name='prelu_1')
