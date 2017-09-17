@@ -15,6 +15,7 @@ from odl.operator import Operator
 from odl.space import tensor_space
 from odl.space.base_tensors import TensorSpace, Tensor
 from odl.trafos.backends import PYFFTW_AVAILABLE
+from odl.util import is_real_dtype, is_floating_dtype
 
 
 class Convolution(Operator):
@@ -179,10 +180,24 @@ class DiscreteConvolution(Operator):
             have the same number of dimensions as ``domain``, and its
             shape can be at most equal to ``domain.shape``. In axes
             with size 1, broadcasting is applied.
+
+            **Important:**
+
+            - The kernel must **always** have the same number of dimensions
+              as ``domain``, even for convolutions along axes.
+            - In axes where no convolution is performed, the shape of the
+              kernel must either be 1 (broadcasting along these axes), or
+              equal to the domain shape.
+
+            See Examples for further clarification.
+
         range : `TensorSpace`, optional
             Space of output elements of the convolution. Must be of the
-            same shape as ``domain``. If not given, the range is equal
-            to ``domain``.
+            same shape as ``domain``. If not given, the range is equal to
+            ``domain.astype(result_dtype)``, where ``result_dtype`` is
+            the data type of the convolution result. If ``impl='real'``,
+            integer dtypes are preserved, while for ``impl='fft'``,
+            the smallest possible floating-point type is chosen.
         axis : int or sequence of ints, optional
             Coordinate axis or axes in which to take the convolution.
             ``None`` means all input axes.
@@ -214,7 +229,8 @@ class DiscreteConvolution(Operator):
         - For ``impl='real'``, the out-of-place call (no ``out`` parameter)
           is faster since the backend does not support writing to an
           existing array.
-        - For ``impl='fft'``, the NumPy FFT backend does not support
+        - For ``impl='fft'``, the out-of-place variant is also faster since
+          padding and un-padding the NumPy FFT backend does not support
           ``out`` arrays either and will thus also result in the
           out-of-place variant being faster. If the ``pyfftw`` backend is
           used, in-place evaluation is faster.
@@ -229,6 +245,71 @@ class DiscreteConvolution(Operator):
 
           Not possible with this approach is here a convolution with a
           *different* kernel in each column.
+        - The NumPy FFT backend always uses ``'float64'`` internally,
+          so different data types will simply result in additional casting,
+          not speedup or higher precision.
+
+        Examples
+        --------
+        Convolve in all axes:
+
+        >>> space = odl.rn((3, 3))
+        >>> kernel = [[0, 0, 0],  # A discrete Dirac delta
+        ...           [0, 1, 0],
+        ...           [0, 0, 0]]
+        >>> conv = DiscreteConvolution(space, kernel)
+        >>> x = space.element([[1, 2, 3],
+        ...                    [2, 4, 6],
+        ...                    [-3, -6, -9]])
+        >>> conv(x)
+        rn((3, 3)).element(
+            [[ 1.,  2.,  3.],
+             [ 2.,  4.,  6.],
+             [-3., -6., -9.]]
+        )
+
+        For even-sized kernels, the convolution is performed in a
+        "backwards" manner, i.e., the lower indices are affected by
+        implicit zero-padding:
+
+        >>> kernel = [[1, 1],  # 2x2 blurring kernel
+        ...           [1, 1]]
+        >>> conv = DiscreteConvolution(space, kernel)
+        >>> x = space.element([[1, 2, 3],
+        ...                    [2, 4, 6],
+        ...                    [-3, -6, -9]])
+        >>> conv(x)
+        rn((3, 3)).element(
+            [[  1.,   3.,   5.],
+             [  3.,   9.,  15.],
+             [ -1.,  -3.,  -5.]]
+        )
+
+        Convolution in selected axes can be done either with broadcasting
+        or with "stacked kernels":
+
+        >>> kernel_1d = [1, -1]  # backward difference kernel
+        >>> kernel = np.array(kernel_1d)[None, :]  # broadcasting in axis 0
+        >>> conv = DiscreteConvolution(space, kernel, axis=1)
+        >>> x = space.element([[1, 2, 3],
+        ...                    [2, 4, 6],
+        ...                    [-3, -6, -9]])
+        >>> conv(x)
+        rn((3, 3)).element(
+            [[ 1.,  1.,  1.],
+             [ 2.,  2.,  2.],
+             [-3., -3., -3.]]
+        )
+        >>> kernel_stack = [[1, -1],  # separate kernel per row
+        ...                 [2, -2],
+        ...                 [3, -3]]
+        >>> conv = DiscreteConvolution(space, kernel_stack, axis=1)
+        >>> conv(x)
+        rn((3, 3)).element(
+            [[ 1.,  1.,  1.],
+             [ 4.,  4.,  4.],
+             [-9., -9., -9.]]
+        )
         """
         from builtins import range as builtin_range
         assert isinstance(domain, TensorSpace)
@@ -239,25 +320,33 @@ class DiscreteConvolution(Operator):
             kernel = ker_space.element(kernel)
 
         if range is None:
-            range = domain
+            result_dtype = np.result_type(domain.dtype, kernel.dtype)
+            if str(impl).lower() == 'fft':
+                result_dtype = np.result_type(result_dtype, np.float16)
+            range = domain.astype(result_dtype)
 
         super(DiscreteConvolution, self).__init__(domain, range, linear=True)
 
         self.__kernel = kernel
 
         if axis is None:
-            self.__axis = tuple(builtin_range(self.domain.ndim))
+            self.__axes = tuple(builtin_range(self.domain.ndim))
         else:
             try:
                 iter(axis)
             except TypeError:
-                self.__axis = (int(axis),)
+                self.__axes = (int(axis),)
             else:
-                self.__axis = tuple(int(ax) for ax in axis)
+                self.__axes = tuple(int(ax) for ax in axis)
+
+        assert all(kernel.shape[i] == 1 or
+                   kernel.shape[i] == self.domain.shape[i]
+                   for i in builtin_range(self.domain.ndim)
+                   if i not in self.axes)
 
         self.__impl = str(impl).lower()
         if self.impl == 'real':
-            assert self.axis == tuple(builtin_range(self.domain.ndim))
+            assert self.axes == tuple(builtin_range(self.domain.ndim))
             self.__real_impl = 'scipy'
             self.__fft_impl = None
         elif self.impl == 'fft':
@@ -269,25 +358,30 @@ class DiscreteConvolution(Operator):
         assert padding is None or padded_shape is None
 
         if padding is None:
-            padding = tuple(np.minimum(np.array(self.kernel.shape) - 1, 64))
+            full_padding = np.minimum(np.array(self.kernel.shape) - 1, 64)
+            padding = [full_padding[i] if i in self.axes else 0
+                       for i in builtin_range(self.domain.ndim)]
         else:
             try:
                 iter(padding)
             except TypeError:
-                padding = tuple(int(padding) if i in self.axis else 0
-                                for i in builtin_range(self.domain.ndim))
+                padding = [int(padding) if i in self.axes else 0
+                           for i in builtin_range(self.domain.ndim)]
             else:
-                padding = tuple(int(p) for p in padding)
-                if len(padding) == len(self.axis):
+                padding = [int(p) for p in padding]
+                if len(padding) == len(self.axes):
                     padding_lst = [0] * self.domain.ndim
-                    for ax, pad in zip(self.axis, padding):
+                    for ax, pad in zip(self.axes, padding):
                         padding_lst[ax] = pad
-                    padding = tuple(padding_lst)
+                    padding = padding_lst
 
         if padded_shape is None:
             padded_shape = tuple(np.array(self.domain.shape) + padding)
 
         self.__padded_shape = padded_shape
+
+        self.__cache_kernel_ft = bool(kwargs.pop('cache_kernel_ft', False))
+        self._kernel_ft = None
 
     @property
     def kernel(self):
@@ -295,9 +389,9 @@ class DiscreteConvolution(Operator):
         return self.__kernel
 
     @property
-    def axis(self):
-        """The axis or axes in which the convolution is taken."""
-        return self.__axis
+    def axes(self):
+        """The dimensions along which the convolution is taken."""
+        return self.__axes
 
     @property
     def impl(self):
@@ -319,13 +413,18 @@ class DiscreteConvolution(Operator):
         """Domain shape after padding for FFT-based convolution."""
         return self.__padded_shape
 
+    @property
+    def cache_kernel_ft(self):
+        """If ``True``, the kernel FT is cached for later reuse."""
+        return self.__cache_kernel_ft
+
     def _call(self, x, out=None):
         """Perform convolution of ``f`` with `kernel`."""
-        if self.impl == 'real' and self.call_real == 'scipy':
-            return self._call_scipy(x, out)
+        if self.impl == 'real' and self.real_impl == 'scipy':
+            return self._call_scipy_convolve(x, out)
         elif self.impl == 'fft' and self.fft_impl == 'numpy':
             return self._call_numpy_fft(x, out)
-        elif self.impl == 'fft' and self.fft_impl == 'pfftw':
+        elif self.impl == 'fft' and self.fft_impl == 'pyfftw':
             return self._call_pyfftw(x, out)
         else:
             raise RuntimeError('bad `impl` {!r} or `fft_impl` {!r}'
@@ -345,168 +444,228 @@ class DiscreteConvolution(Operator):
 
     def _call_numpy_fft(self, x, out=None):
         """Perform FFT-based convolution using NumPy's backend."""
+        # Use real-to-complex FFT if possible, it's faster
+        if (is_real_dtype(self.kernel.dtype) and
+                is_real_dtype(self.domain.dtype)):
+            fft = np.fft.rfftn
+            ifft = np.fft.irfftn
+        else:
+            fft = np.fft.fftn
+            ifft = np.fft.ifftn
+
+        # Prepare kernel, preserving length-1 axes for broadcasting
+        ker_padded_shp = [1 if self.kernel.shape[i] == 1
+                          else self.padded_shape[i]
+                          for i in range(self.domain.ndim)]
+        kernel_prep = prepare_for_fft(self.kernel, ker_padded_shp, self.axes)
+
+        # Pad the input with zeros
+        paddings = []
+        for i in range(self.domain.ndim):
+            diff = self.padded_shape[i] - x.shape[i]
+            left = diff // 2
+            right = diff - left
+            paddings.append((left, right))
+
+        x_prep = np.pad(x, paddings, 'constant')
+
+        # Perform FFTs of x and kernel (or retrieve from cache)
+        x_ft = fft(x_prep, axes=self.axes)
+
+        if self._kernel_ft is not None:
+            kernel_ft = self._kernel_ft
+        else:
+            kernel_ft = fft(kernel_prep, axes=self.axes)
+            if self.cache_kernel_ft:
+                self._kernel_ft = kernel_ft
+
+        # Multiply x_ft with kernel_ft and transform back. Note that
+        # x_ft and kernel_ft have dtype 'float64' since that's what
+        # numpy.fft does.
+        x_ft *= kernel_ft
+        # irfft needs an explicit shape, otherwise the result shape may not
+        # be the same as the original one
+        s = [x_prep.shape[i]
+             for i in range(self.domain.ndim) if i in self.axes]
+        ifft_x = ifft(x_ft, axes=self.axes, s=s)
+
+        # Unpad to get the "relevant" part
+        slc = [slice(l, n - r) for (l, r), n in zip(paddings, x_prep.shape)]
+        if out is None:
+            out = ifft_x[slc]
+        else:
+            out[:] = ifft_x[slc]
+
+        return out
+
+    def _call_pyfftw(self, x, out=None):
+        """Perform FFT-based convolution using the pyfftw backend."""
+        import multiprocessing
+        import pyfftw
+
+        # Prepare kernel, preserving length-1 axes for broadcasting
+        if is_floating_dtype(self.kernel.dtype):
+            kernel = self.kernel
+        else:
+            flt_dtype = np.result_type(self.kernel.dtype, np.float16)
+            kernel = np.asarray(self.kernel, dtype=flt_dtype)
+
+        ker_padded_shp = [1 if self.kernel.shape[i] == 1
+                          else self.padded_shape[i]
+                          for i in range(self.domain.ndim)]
+        kernel_prep = prepare_for_fft(kernel, ker_padded_shp, self.axes)
+        kernel = None  # can be gc'ed
+
+        # Pad the input with zeros
+        paddings = []
+        for i in range(self.domain.ndim):
+            diff = self.padded_shape[i] - x.shape[i]
+            left = diff // 2
+            right = diff - left
+            paddings.append((left, right))
+
+        # TODO: order
+        x_prep = np.pad(x, paddings, 'constant')
+        x_prep_shape = x_prep.shape
+
+        # Real-to-halfcomplex only if both domain and kernel are eligible
+        use_halfcx = (is_real_dtype(self.domain.dtype) and
+                      is_real_dtype(self.kernel.dtype))
+
+        def fft_out_array(arr, use_halfcx):
+            """Make an output array for FFTW with suitable dtype and shape."""
+            ft_dtype = np.result_type(arr.dtype, 1j)
+            ft_shape = list(arr.shape)
+            if use_halfcx:
+                ft_shape[self.axes[-1]] = ft_shape[self.axes[-1]] // 2 + 1
+            return np.empty(ft_shape, ft_dtype)
+
+        # Perform FFT of x. Use 'FFTW_ESTIMATE', since other options destroy
+        # the input and would require a copy.
+        x_ft = fft_out_array(x_prep, use_halfcx)
+        if not use_halfcx and x_ft.dtype != x_prep.dtype:
+            # Need to perform C2C transform, hence a cast
+            x_prep = x_prep.astype(x_ft.dtype)
+
+        plan_x = pyfftw.FFTW(x_prep, x_ft, axes=self.axes,
+                             direction='FFTW_FORWARD',
+                             flags=['FFTW_ESTIMATE'],
+                             threads=multiprocessing.cpu_count())
+        plan_x(x_prep, x_ft)
+        plan_x = None  # can be gc'ed
+        x_prep = None
+
+        # Perform FFT of kernel if necessary
+        if self._kernel_ft is not None:
+            kernel_ft = self._kernel_ft
+        else:
+            kernel_ft = fft_out_array(kernel_prep, use_halfcx)
+            if not use_halfcx and kernel_ft.dtype != kernel_prep.dtype:
+                # Need to perform C2C transform, hence a cast
+                kernel_prep = kernel_prep.astype(kernel_ft.dtype)
+
+            plan_kernel = pyfftw.FFTW(kernel_prep, kernel_ft, axes=self.axes,
+                                      direction='FFTW_FORWARD',
+                                      flags=['FFTW_ESTIMATE'],
+                                      threads=multiprocessing.cpu_count())
+            plan_kernel(kernel_prep, kernel_ft)
+            plan_kernel = None  # can be gc'ed
+            kernel_prep = None
+
+        # Multiply x_ft with kernel_ft and transform back. Some care
+        # is required with respect to dtypes, in particular when
+        # x_ft.dtype < kernel_ft.dtype.
+        if x_ft.dtype < kernel_ft.dtype:
+            x_ft = x_ft * kernel_ft
+        else:
+            x_ft *= kernel_ft
+
+        # Perform inverse FFT
+        x_ift_dtype = np.empty(0, dtype=x_ft.dtype).real.dtype
+        x_ift = np.empty(x_prep_shape, x_ift_dtype)
+        plan_ift = pyfftw.FFTW(x_ft, x_ift, axes=self.axes,
+                               direction='FFTW_BACKWARD',
+                               flags=['FFTW_ESTIMATE'],
+                               threads=multiprocessing.cpu_count())
+
+        plan_ift(x_ft, x_ift)
+        x_ft = None  # can be gc'ed
+
+        # Unpad to get the "relevant" part
+        slc = [slice(l, n - r) for (l, r), n in zip(paddings, x_prep_shape)]
+        if out is None:
+            out = x_ift[slc]
+        else:
+            out[:] = x_ift[slc]
+
+        return out
 
 
+def prepare_for_fft(kernel, padded_shape, axes=None):
+    """Return a kernel with desired shape with middle entry at index 0.
 
-def kernel_padding_lengths(old_len, new_len):
-    """Return left and right kernel padding sizes.
-
-    When padding the kernel, the middle element, i.e., the one at index
-    ``(old_len - 1) // 2``, has to be located at the new middle
-    ``(new_len - 1) // 2`` after padding. This is achieved by adding
-    ``(new_len - 1) // 2 - (old_len - 1) // 2`` zeros to the left, and
-    enough zeros to the right to reach the desired length.
-
-    Parameters
-    ----------
-    old_len, new_len : int
-        Kernel size before and after padding, respectively.
-
-    Returns
-    -------
-    num_left, num_right : int
-        Number of zeros that should be added to the left and right.
-    """
-    num_left = (new_len - 1) // 2 - (old_len - 1) // 2
-    num_right = new_len - old_len - num_left
-    return num_left, num_right
-
-
-def padded_kernel(kernel, padded_shape):
-    """Zero-pad the kernel such that the middle entry is preserved.
-
-    See ``kernel_padding_lengths`` for an explanation.
+    This function applies the appropriate steps to prepare a kernel for
+    FFT-based convolution. It first pads the kernel with zeros *to the
+    right* up to ``padded_shape``, and then rolls the entries such that
+    the old middle element, i.e., the one at ``(kernel.shape - 1) // 2``,
+    lies at index 0.
 
     Parameters
     ----------
     kernel : array-like
-        The kernel to be padded.
+        The kernel to be prepared for FFT convolution.
     padded_shape : sequence of ints
         The target shape to be reached by zero-padding.
+    axes : sequence of ints, optional
+        Dimensions in which to perform shifting. ``None`` means all axes.
 
     Returns
     -------
-    padded_kernel : `numpy.ndarray`
-        The kernel padded with zeros, such that the middle element remains
-        the same.
+    prepared : `numpy.ndarray`
+        The zero-padded and rolled kernel ready for FFT.
+
+    Examples
+    --------
+    >>> kernel = np.array([[1, 2, 3],
+    ...                    [4, 5, 6]])  # middle element is 2
+    >>> prepare_for_fft(kernel, padded_shape=(4, 4))
+    array([[2, 3, 0, 1],
+           [5, 6, 0, 4],
+           [0, 0, 0, 0],
+           [0, 0, 0, 0]])
+    >>> prepare_for_fft(kernel, padded_shape=(5, 5))
+    array([[2, 3, 0, 0, 1],
+           [5, 6, 0, 0, 4],
+           [0, 0, 0, 0, 0],
+           [0, 0, 0, 0, 0],
+           [0, 0, 0, 0, 0]])
     """
     kernel = np.asarray(kernel)
-    inner_slc = []
-    for old_len, new_len in zip(kernel.shape, padded_shape):
-        nl, nr = kernel_padding_lengths(old_len, new_len)
-        inner_slc.append(slice(nl, new_len - nr))  # avoid -0
-
     if kernel.flags.f_contiguous and not kernel.flags.c_contiguous:
         order = 'F'
     else:
         order = 'C'
 
     padded = np.zeros(padded_shape, kernel.dtype, order)
-    padded[inner_slc] = kernel
-    return padded
 
+    if axes is None:
+        axes = list(range(kernel.ndim))
 
-def fftshift_kernel(kernel):
-    """Perform an FFTshift-like operation on the kernel."""
-    kernel = np.asarray(kernel)
-    for i, n in enumerate(kernel.shape):
-        slc_l = [slice(None)] * kernel.ndim
-        slc_r = [slice(None)] * kernel.ndim
-        slc_l[i] = slice((n - 1) // 2, None)
-        slc_r[i] = slice((n - 1) // 2)
-        kernel = np.concatenate([kernel[slc_l], kernel[slc_r]], axis=i)
-
-    return kernel
-
-
-def padded_kernel2(kernel, padded_shape):
-    kernel = np.asarray(kernel)
-    if kernel.flags.f_contiguous and not kernel.flags.c_contiguous:
-        order = 'F'
-    else:
-        order = 'C'
-
-    padded = np.zeros(padded_shape, kernel.dtype, order)
+    if any(padded_shape[i] != kernel.shape[i] for i in range(kernel.ndim)
+           if i not in axes):
+        raise ValueError(
+            '`padded_shape` can only differ from `kernel.shape` in `axes`; '
+            'got `padded_shape={}`, `kernel.shape={}`, `axes={}`'
+            ''.format(padded_shape, kernel.shape, axes))
 
     orig_slc = [slice(n) for n in kernel.shape]
     padded[orig_slc] = kernel
     # This shift makes sure that the middle element is shifted to index 0
-    shift = [-(n - 1) // 2 + 1 for n in kernel.shape]
-    return np.roll(padded, shift, axis=range(kernel.ndim))
+    shift = [-((kernel.shape[i] - 1) // 2) if i in axes else 0
+             for i in range(kernel.ndim)]
+    return np.roll(padded, shift, axis=axes)
 
 
-def dump():
-    # Pad image with zeros
-    if padding:
-        image_padded = np.pad(image, padding, mode='constant')
-    else:
-        image_padded = image.copy() if impl == 'pyfftw' else image
-
-
-    # Pad the filters
-    def padded_filter(filt, n_new):
-        """Return padded filter with new length.
-
-        The filter is padded with zeros such that the middle element of
-        the padded filter, i.e., the one with index
-        ``(len(filt) - 1) // 2``, is the same as in the original filter.
-        This is achieved by adding
-        ``(n_new - 1) // 2 - (n_old - 1) // 2`` zeros to the left, and
-        enough zeros to the right to reach the desired length.
-        """
-        n_old = len(filt)
-        n_left = (n_new - 1) // 2 - (n_old - 1) // 2
-        n_right = n_new - n_old - n_left
-        left = np.zeros(n_left, dtype=filt.dtype)
-        right = np.zeros(n_right, dtype=filt.dtype)
-        return np.concatenate([left, filt, right])
-
-
-    fh = np.asarray(fh).astype(image.dtype)
-    if fh.ndim != 1:
-        raise ValueError('`fh` must be one-dimensional')
-    elif fh.size == 0:
-        raise ValueError('`fh` cannot have size 0')
-    elif fh.size > image.shape[0]:
-        raise ValueError('`fh` can be at most `image.shape[0]`, got '
-                         '{} > {}'.format(fh.size, image.shape[0]))
-    else:
-        fh = padded_filter(fh, image_padded.shape[0])
-
-
-    fv = np.asarray(fv).astype(image.dtype)
-    if fv.ndim != 1:
-        raise ValueError('`fv` must be one-dimensional')
-    elif fv.size == 0:
-        raise ValueError('`fv` cannot have size 0')
-    elif fv.size > image.shape[0]:
-        raise ValueError('`fv` can be at most `image.shape[1]`, got '
-                         '{} > {}'.format(fv.size, image.shape[1]))
-    else:
-        fv = padded_filter(fv, image_padded.shape[1])
-
-
-    # We also need to perform a kind of FFTshift on the filters, namely
-    # `[h_m, h_{m+1},..., h_{n-1}, h_0, ..., h_{m-1}]`, where
-    # `m = (n - 1) // 2`. This is neither FFTshift nor IFFTshift exactly,
-    # but easily written by hand.
-    mid = (len(fh) - 1) // 2
-    fh = np.concatenate([fh[mid:], fh[:mid]])
-    mid = (len(fv) - 1) // 2
-    fv = np.concatenate([fv[mid:], fv[:mid]])
-
-
-    # Perform the multiplication in Fourier space
-    if impl == 'numpy':
-        image_ft = np.fft.rfftn(image_padded)
-        fh_ft = np.fft.fft(fh)
-        fv_ft = np.fft.rfft(fv)
-
-
-        image_ft *= fh_ft[:, None]
-        image_ft *= fv_ft[None, :]
-        # Important to specify the shape since `irfftn` cannot know the
-        # original shape
-        conv = np.fft.irfftn(image_ft, s=image_padded.shape)
-        if conv.dtype != image.dtype:
-            conv = conv.astype(image.dtype)
+if __name__ == '__main__':
+    from odl.util import run_doctests
+    run_doctests()
