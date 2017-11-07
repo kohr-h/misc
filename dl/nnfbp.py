@@ -1,6 +1,7 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import odl
-from odl.contrib import pytorch
+import odl.contrib.torch as odl_torch
 import torch
 from torch import nn, autograd
 from tensorboardX import SummaryWriter
@@ -63,30 +64,26 @@ class NNFBP(nn.Module):
 
         self.fbp_ker_size = fbp_ker_size
         # Data space convolution only along axis 1
-        self.conv_det = nn.Conv2d(1, 32, kernel_size=(1, self.fbp_ker_size),
-                                  padding=(0, self.fbp_ker_size - 1))
+        self.conv_det = nn.Conv2d(1, 1, kernel_size=(1, self.fbp_ker_size),
+                                  padding=(0, self.fbp_ker_size - 1),
+                                  bias=False)
 
         # Backprojection layer
-        self.backproj = pytorch.TorchOperator(ray_trafo.adjoint)
+        self.backproj = odl_torch.OperatorAsModule(ray_trafo.adjoint)
 
         # Volumetric convolutions, one full and one reducing to 1 channel
-        self.conv1_vol = nn.Conv2d(32, 32, 3, padding=2)
-        self.conv2_vol = nn.Conv2d(32, 1, 3, padding=2)
+        # self.conv1_vol = nn.Conv2d(32, 32, 3, padding=2)
+        # self.conv2_vol = nn.Conv2d(32, 1, 3, padding=2)
 
     def forward(self, x):
         y = self.conv_det(x)[..., :-(self.fbp_ker_size - 1)]
-
-        # Need a bit of trickery here to get the BP through, since it
-        # doesn't support batch transforms
-        y = torch.stack([self.backproj(y[0, i])[None, ...]
-                        for i in range(32)], dim=1)
-
-        y = self.conv1_vol(y)
-        y = y[..., :-2, :-2]
-        y = nn.functional.sigmoid(y)
-        y = self.conv2_vol(y)
-        y = y[..., :-2, :-2]
-        y = nn.functional.sigmoid(y)
+        y = self.backproj(y)
+        # y = self.conv1_vol(y)
+        # y = y[..., :-2, :-2]
+        # y = nn.functional.sigmoid(y)
+        # y = self.conv2_vol(y)
+        # y = y[..., :-2, :-2]
+        # y = nn.functional.sigmoid(y)
         return y
 
 
@@ -95,24 +92,73 @@ loss_func = nn.MSELoss(size_average=False)
 # %% Train the network
 
 num_epochs = 1
-train_size = 100
-learn_rate = 0.01
+train_size = 2
+learn_rate = 0.00000000000001
+cuda = True
+use_tb = False
 
 nnfbp = NNFBP()
-nnfbp.cuda()
+if cuda:
+    nnfbp = nnfbp.cuda()
 
-# Compute loss once to make a graph
-writer = SummaryWriter(comment='_nnfbp')
-target_arr = random_ellipses(np.random.randint(5, 40))
-target = autograd.Variable(torch.from_numpy(target_arr).cuda())
-inp_arr = ray_trafo(target_arr)
-inp = autograd.Variable(torch.from_numpy(inp_arr.asarray()).cuda())
-inp = inp[None, None, ...]
-outp = nnfbp(inp)
-loss = loss_func(outp, target)
-writer.add_graph(nnfbp, loss)
+if use_tb:
+    # Compute loss once to make a graph
+    writer = SummaryWriter(comment='_nnfbp')
+    target_arr = random_ellipses(np.random.randint(5, 40))
+    target = autograd.Variable(torch.from_numpy(target_arr))
+    if cuda:
+        target = target.cuda()
 
-# TODO: batches
+    inp_arr = ray_trafo(target_arr)
+    inp = autograd.Variable(torch.from_numpy(inp_arr.asarray()))
+    if cuda:
+        inp = inp.cuda()
+    inp = inp[None, None, ...]
+    outp = nnfbp(inp)
+    loss = loss_func(outp, target)
+    writer.add_graph(nnfbp, loss)
+
+
+for epoch in range(1, num_epochs + 1):
+    print('*************')
+    print('* EPOCH {:>3} *'.format(epoch))
+    print('*************')
+
+    with odl.util.NumpyRandomSeed(123):
+        for i in range(train_size):
+            target_arr = random_ellipses(np.random.randint(5, 40))
+            fig, ax = plt.subplots()
+            ax.imshow(target_arr, cmap='gray')
+            ax.set_title('Epoch {}, image {}, ground truth'.format(epoch, i))
+            fig.show()
+            target = autograd.Variable(torch.from_numpy(target_arr))
+            if cuda:
+                target = target.cuda()
+
+            inp_arr = ray_trafo(target_arr)
+            inp = autograd.Variable(torch.from_numpy(inp_arr.asarray()))
+            if cuda:
+                inp = inp.cuda()
+            inp = inp[None, None, ...]
+
+            outp = nnfbp(inp)
+
+            inp_npy = inp.data.cpu().numpy()
+            out_npy = outp.data.cpu().numpy()
+
+            fig, ax = plt.subplots()
+            ax.imshow(inp_npy.squeeze(), cmap='gray')
+            ax.set_title('Epoch {}, image {}, input'.format(epoch, i))
+            fig.show()
+
+            fig, ax = plt.subplots()
+            ax.imshow(out_npy.squeeze(), cmap='gray')
+            ax.set_title('Epoch {}, image {}, output'.format(epoch, i))
+            fig.show()
+
+
+# Optimizer
+optimizer = torch.optim.SGD(nnfbp.parameters(), lr=learn_rate)
 
 for epoch in range(1, num_epochs + 1):
     print('*************')
@@ -125,26 +171,36 @@ for epoch in range(1, num_epochs + 1):
     with odl.util.NumpyRandomSeed(123):
         for i in range(train_size):
             target_arr = random_ellipses(np.random.randint(5, 40))
-            target = autograd.Variable(torch.from_numpy(target_arr).cuda())
+            target = autograd.Variable(torch.from_numpy(target_arr))
+            if cuda:
+                target = target.cuda()
 
             inp_arr = ray_trafo(target_arr)
-            inp = autograd.Variable(torch.from_numpy(inp_arr.asarray()).cuda())
+            inp = autograd.Variable(torch.from_numpy(inp_arr.asarray()))
+            if cuda:
+                inp = inp.cuda()
             inp = inp[None, None, ...]
 
             outp = nnfbp(inp)
-
             nnfbp.zero_grad()
             loss = loss_func(outp, target)
             loss.backward()
 
-            for p in nnfbp.parameters():
-                print(p.grad)
-                p.sub_(learn_rate * p.grad)
-
+            optimizer.step()
             running_loss += loss.data[0]
             if i % 10 == 0:
                 print('[{:>3}, {:>4}] loss = {:.4}'.format(
                          epoch, i, running_loss))
-                writer.add_scalar('loss', running_loss)
+                if use_tb:
+                    writer.add_scalar('loss', running_loss,
+                                      (epoch - 1) * train_size + i)
 
 writer.close()
+
+
+# %%  Display parameters
+
+def show_kernel(kernel):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
