@@ -10,7 +10,6 @@ from chainer import Chain, Variable
 from chainer.links import ConvolutionND
 from chainer.functions import relu, mean_squared_error
 import cupy
-from time import time
 
 
 class TestChain3d(Chain):
@@ -35,27 +34,24 @@ class TestChain3d(Chain):
         return x
 
 
-N = 512
+N = 128
+cupy.zeros(1)  # Init CUDA to set the baseline memory usage
 
+# %% Network definition
 chain = TestChain3d()
 chain.to_gpu()
 
+# %% Variables
 x_arr = cupy.zeros((N, N, N), dtype='float32')
+print('Input size (MB): {}'.format(x_arr.size * x_arr.itemsize / 1e6))
 x = Variable(x_arr)[None, None, ...]  # empty batch and channel axes
+# Convolution doesn't pad, so size shrinks by `kernel.shape - 1` each time
 tgt_arr = cupy.zeros((N - 6, N - 6, N - 6), dtype='float32')
 tgt = Variable(tgt_arr)[None, None, ...]  # empty batch and channel axes
 
-t_start = time()
+# %% Forward
 y = chain(x)
-t_after_chain = time()
 z = mean_squared_error(y, tgt)
-t_after_loss = time()
-z.backward()
-t_after_grad = time()
 
-print('Time for forward pass: {:.4} s'
-      ''.format(t_after_chain - t_start))
-print('Time for loss computation: {:.4} s'
-      ''.format(t_after_loss - t_after_chain))
-print('Time for gradient computation: {:.4} s'
-      ''.format(t_after_grad - t_after_loss))
+# %% Backward
+z.backward()
