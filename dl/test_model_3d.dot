@@ -1,0 +1,85 @@
+digraph graphname {
+    // These attributes apply to the graph itself
+    //size="1,1";
+    rankdir = "TB"
+
+    // The label attribute can be used to change the label of a node
+    I [label = "Input"]
+    H11 [label = "Hidden 1"]
+    H12 [label = "Hidden 1"]
+    H13 [label = "Hidden 1"]
+    H14 [label = "Hidden 1"]
+    H21 [label = "Hidden 2"]
+    H22 [label = "Hidden 2"]
+    H23 [label = "Hidden 2"]
+    H24 [label = "Hidden 2"]
+    H31 [label = "Hidden 3"]
+    H32 [label = "Hidden 3"]
+    H33 [label = "Hidden 3"]
+    H34 [label = "Hidden 3"]
+    H35 [label = "Hidden 3"]
+    H36 [label = "Hidden 3"]
+    H37 [label = "Hidden 3"]
+    H38 [label = "Hidden 3"]
+    H41 [label = "Hidden 4"]
+    H42 [label = "Hidden 4"]
+    H43 [label = "Hidden 4"]
+    H44 [label = "Hidden 4"]
+    H45 [label = "Hidden 4"]
+    H46 [label = "Hidden 4"]
+    H47 [label = "Hidden 4"]
+    H48 [label = "Hidden 4"]
+    H5 [label = "Hidden 5"]
+    O [label = "Output"]
+    T [label = "Target"]
+    L [label = "Loss"]
+
+    // Input -> Hidden 1 (conv)
+    I -> H11 [label = "conv[3,3,3]"]
+    I -> H12 [label = "conv[3,3,3]"]
+    I -> H13 [label = "conv[3,3,3]"]
+    I -> H14 [label = "conv[3,3,3]"]
+
+    // Hidden 1 -> Hidden 2 (ReLU)
+    H11 -> H21 [label = "ReLU"]
+    H12 -> H22 [label = "ReLU"]
+    H13 -> H23 [label = "ReLU"]
+    H14 -> H24 [label = "ReLU"]
+
+    // Hidden 2 -> Hidden 3 (conv[3,3,3])
+    H21 -> H31 [label = "conv[3,3,3]"]
+    H21 -> H32 [label = "conv[3,3,3]"]
+    H22 -> H33 [label = "conv[3,3,3]"]
+    H22 -> H34 [label = "conv[3,3,3]"]
+    H23 -> H35 [label = "conv[3,3,3]"]
+    H23 -> H36 [label = "conv[3,3,3]"]
+    H24 -> H37 [label = "conv[3,3,3]"]
+    H24 -> H38 [label = "conv[3,3,3]"]
+
+    // Hidden 3 -> Hidden 4 (ReLU)
+    H31 -> H41 [label = "ReLU"]
+    H32 -> H42 [label = "ReLU"]
+    H33 -> H43 [label = "ReLU"]
+    H34 -> H44 [label = "ReLU"]
+    H35 -> H45 [label = "ReLU"]
+    H36 -> H46 [label = "ReLU"]
+    H37 -> H47 [label = "ReLU"]
+    H38 -> H48 [label = "ReLU"]
+
+    // Hidden 4 -> Hidden 5 (conv[3,3,3])
+    H41 -> H5 [label = "conv[3,3,3]"]
+    H42 -> H5 [label = "conv[3,3,3]"]
+    H43 -> H5 [label = "conv[3,3,3]"]
+    H44 -> H5 [label = "conv[3,3,3]"]
+    H45 -> H5 [label = "conv[3,3,3]"]
+    H46 -> H5 [label = "conv[3,3,3]"]
+    H47 -> H5 [label = "conv[3,3,3]"]
+    H48 -> H5 [label = "conv[3,3,3]"]
+
+    // Hidden 5 -> Output (ReLU)
+    H5 -> O [label = "ReLU"]
+
+    // Output + Target -> loss
+    O -> L [label = "MSE"]
+    T -> L
+}
