@@ -6,9 +6,11 @@
 
        #!/bin/sh
 
-       ccache /usr/local/cuda/bin/nvcc -ccbin /opt/sw/gcc-5.4.0/bin -Wno-deprecated-gpu-targets "$@"
+       /usr/local/cuda/bin/nvcc -ccbin /opt/sw/gcc-5.4.0/bin "$@"
 
-2. Install dependencies:
+   Put the script on your `$PATH` (here `~/local/bin`) and make it executable.
+
+2. Install dependencies (in a `conda` environment):
 
        conda install six numpy cudnn nccl
        conda install -c conda-forge cython  # need version 0.27 or higher
