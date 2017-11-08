@@ -2,7 +2,7 @@
 
 **Make sure to adapt the paths to your system.**
 
-1. Make a custom `nvcc` script that sets `-ccbin` and uses `ccache` (optional):
+1. Make a custom `nvcc` script that sets `-ccbin`:
 
        #!/bin/sh
 
