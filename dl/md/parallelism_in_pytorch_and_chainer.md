@@ -1,8 +1,24 @@
 # Parallelism in pyTorch and Chainer
 
-We investigate the possibility to parallelize training of deep neural networks using pyTorch and Chainer. Generally, we distinguish between **data parallelism** and **model parallelism**, and in the following we document the support of the frameworks for this feature and which approach(es) are implemented in the library cores.
+## TL;DR
 
-We also check for an opportunity to "serialize" parallel GPU code, in the sense that we use a single GPU but process data in chunks that are sent to the GPU one at a time. This "fake parallelism" is useful for datasets that are too large to be processed in parallel (batches / channels) on a single GPU. It would allow to use existing models with minimal changes, while significantly reducing the GPU memory required to evaluate and train the model.
+- **data-parallel** = chunked data, same model per GPU
+- **model parallel** = different evaluation paths per GPU
+
+mode                   |data-parallel|model-parallel|pyTorch         |Chainer
+-----------------------|-------------|--------------|----------------|------------------
+input batch chunking   | yes         | no           | `DataParallel` | `ParallelUpdater`
+output channel chunking| no          | yes          | low-level (1)  | low-level (1)
+blockwise evaluation   | yes         | no           | low-level (2)  | low-level (2)
+
+(1) requires manual rewriting of layers with channels, or building from scratch
+
+(2) requires logic for generating and merging overlapping chunks
+
+
+## Introduction
+
+We investigate the possibility to parallelize training of deep neural networks using pyTorch and Chainer. Generally, we distinguish between **data parallelism** and **model parallelism**, and in the following we document the support of the frameworks for this feature and which approach(es) are implemented in the library cores.
 
 
 ## Principle
@@ -82,15 +98,35 @@ Here we assume that `N = n * M`, where `M` is the number of blocks per axis.
 
 ## Support in pyTorch
 
-`torch` has wrapper classes for existing models that implement parallelism. TODO: write more
+The pyTorch framework has two classes to implement data parallelism, [`DataParallel`](http://pytorch.org/docs/master/nn.html#dataparallel) for single-machine parallelism and [`DistributedDataParallel`](http://pytorch.org/docs/master/nn.html#distributeddataparallel) for distributed computation. The latter uses the [`gloo`](https://github.com/facebookincubator/gloo) library for implementing parallel algorithms, which may be worth a look as well. We will not consider distributed algorithms here.
 
-- [`DataParallel` class](http://pytorch.org/docs/master/nn.html#dataparallel) single-machine
-- [`DistributedDataParallel` class](http://pytorch.org/docs/master/nn.html#distributeddataparallel) distributed
+The `DataParallel` class wraps an existing [`Module`](http://pytorch.org/docs/master/nn.html#torch.nn.Module) (=model/layer/network) and returns a new module that does the following in a forward pass:
+
+- The model is replicated on each device, i.e., each GPU has a copy of all [`Parameter`](http://pytorch.org/docs/master/nn.html#torch.nn.Parameter)s of the model.
+- The input is split along the **batch axis** and [scattered](http://mpitutorial.com/tutorials/mpi-scatter-gather-and-allgather/) to the GPUs. The input can be either on the CPU or on one of the GPUs.
+- Each GPU computes its output by running a forward pass of the model with its chunk.
+- The results are gathered into a big tensor on the output device, which can be a GPU or the CPU.
+
+For the backward pass, the procedure is as follows:
+
+- Model and input chunks ~~are still on the GPUs~~ are replicated/scattered to the GPUs again.
+- Output gradients (derivatives of the layer one below with respect to the model outputs) are scattered to the GPUs.
+- Each GPU performs backpropagation to populate the gradients with respect to the input chunks.
+- The input chunk gradients are gathered into a big input gradient.
+
+Obviously, this class only implements the simplest variant of pure data parallelism and does not support model parallelism. The latter has to be implemented by the user.
 
 ## Support in Chainer
 
-`chainer` seems to have a more low-level approach to parallelism that provides more opportunity to customize parallelization. TODO: extend this
+Chainer takes a slightly different approach to data parallelism. According to their [tutorial on data parallelism with mutliple GPUs and `Trainer`](https://docs.chainer.org/en/stable/tutorial/gpu.html#data-parallel-computation-on-multiple-gpus-with-trainer), a logic similar to the functionality of `DataParallel` in pyTorch is implemented in the `ParallelUpdater` class. Instead of wrapping the whole model and returning a parallelized version of it, Chainer's parallelization is localized in an `Updater` class that specifies how updates in an optimizer loop are computed. The actual implementation is very similar to `DataParallel` as it seems from the documentation.
 
-- [Tutorial on model parallelism with multiple GPUs](https://docs.chainer.org/en/stable/tutorial/gpu.html#model-parallel-computation-on-multiple-gpus)
-- [Tutorial on data parallelism with mutliple GPUs and `Trainer`](https://docs.chainer.org/en/stable/tutorial/gpu.html#data-parallel-computation-on-multiple-gpus-with-trainer)
-- [Tutorial on data parallelism with mutliple GPUs, without `Trainer`](https://docs.chainer.org/en/stable/tutorial/gpu.html#data-parallel-computation-on-multiple-gpus-without-trainer)
+There is also a [tutorial on data parallelism with mutliple GPUs, but without `Trainer`](https://docs.chainer.org/en/stable/tutorial/gpu.html#data-parallel-computation-on-multiple-gpus-without-trainer). This variant uses low-level functionality directly and may be a good starting point for custom parallelization.
+
+Furthermore, Chainer has a [tutorial on model parallelism with multiple GPUs](https://docs.chainer.org/en/stable/tutorial/gpu.html#model-parallel-computation-on-multiple-gpus) that describes how to build a model using several GPUs, where different nodes compute different things and only occasionally synchronize their results. This can also be interesting to look closer into. However, the tutorial does not describe how to parallelize an *existing* model, hence it does not really go beyond what can be done with pyTorch as well.
+
+
+## Support Summary
+
+- Both pyTorch and Chainer have convenience classes for introducing the simplest form of data parallelism (chunking along batch axis) on top of existing models.
+- Neither (apparently) implements a simple possibility to parallelize models.
+- Both should allow to relatively easily build parallel models from scratch.
