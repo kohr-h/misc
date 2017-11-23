@@ -5,6 +5,7 @@
 1. Make a custom `nvcc` script that sets `-ccbin`:
 
        #!/bin/sh
+       # file: nvcc-with-gcc-5.4.0
 
        /usr/local/cuda/bin/nvcc -ccbin /opt/sw/gcc-5.4.0/bin "$@"
 
@@ -20,7 +21,7 @@
 
        CC=/opt/sw/gcc-5.4.0/bin/gcc \
        CXX=/opt/sw/gcc-5.4.0/bin/g++ \
-       NVCC=~/local/bin/nvcc \
+       NVCC=~/local/bin/nvcc-with-gcc-5.4.0 \
        CUDA_PATH=/usr/local/cuda \
        CFLAGS="-I$CONDA_PREFIX/include -I/opt/sw/gcc-5.4.0/include/" \
        LDFLAGS="-L$CONDA_PREFIX/lib" \
